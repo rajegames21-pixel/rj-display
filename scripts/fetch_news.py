@@ -64,7 +64,11 @@ MAX_NEWS = 150
 MAX_ARTICLE_FETCHES = 400   # matérias novas baixadas por execução
 MAX_ARTICLE_CHARS = 12000
 MAX_IMAGES = 6
-ARTICLE_VERSION = 2         # mude para rebaixar todas as matérias
+ARTICLE_VERSION = 3         # mude para rebaixar todas as matérias
+MAX_VIDEOS = 3
+VIDEO_URL = re.compile(r'itemprop="contentUrl"\s+content="(https://[^"]+\.mp4)"')
+VIDEO_THUMB = re.compile(r'itemprop="thumbnailUrl"\s+content="(https://[^"]+)"')
+VIDEO_NAME = re.compile(r'itemprop="name"\s+content="([^"]*)"')
 # Fotos que não são da matéria: miniaturas de vídeo, outros sites da Globo
 # e os cartões de "veja também" (recorte 810x456)
 NOT_ARTICLE_IMAGE = re.compile(r"video\.glbimg|s2-ge\.|s2-gshow\.|s2-globo|s2-valor|810x456/top|logo|icon|avatar|sprite", re.I)
@@ -226,9 +230,28 @@ def image_key(url):
     return url.split("?")[0].rsplit("/", 1)[-1]
 
 
+def find_videos(page):
+    """Vídeos da matéria: o g1 publica o MP4 (360p) em metadados VideoObject."""
+    videos, seen = [], set()
+    for m in VIDEO_URL.finditer(page):
+        src = html.unescape(m.group(1))
+        vid = re.search(r"/(\d+)[_-]", src)
+        key = vid.group(1) if vid else src
+        if key in seen:
+            continue
+        seen.add(key)
+        before = page[max(0, m.start() - 2000):m.start()]
+        thumbs = VIDEO_THUMB.findall(before)
+        names = VIDEO_NAME.findall(before)
+        poster = thumbs[-1].replace("/x240/", "/x720/") if thumbs else ""
+        videos.append({"src": src, "poster": poster, "title": html.unescape(names[-1]) if names else ""})
+    return videos[:MAX_VIDEOS]
+
+
 def fetch_article(link):
     parser = ArticleParser()
-    parser.feed(fetch(link, timeout=15).decode("utf-8", "replace"))
+    page = fetch(link, timeout=15).decode("utf-8", "replace")
+    parser.feed(page)
     paragraphs = parser.paragraphs or [p for p in parser.fallback if len(p) > 80]
     text, total = [], 0
     for p in paragraphs:
@@ -242,7 +265,7 @@ def fetch_article(link):
         if key not in seen:
             seen.add(key)
             images.append(img)
-    return {"v": ARTICLE_VERSION, "paragraphs": text, "images": images[:MAX_IMAGES]}
+    return {"v": ARTICLE_VERSION, "paragraphs": text, "images": images[:MAX_IMAGES], "videos": find_videos(page)}
 
 
 def article_id(link):
@@ -295,6 +318,8 @@ def attach_articles(results):
                     seen.add(image_key(img))
                     uniq.append(img)
             n["images"] = uniq[:MAX_IMAGES]
+            if art.get("videos"):
+                n["videos"] = art["videos"]
             if not n["image"] and uniq:
                 n["image"] = uniq[0]
 

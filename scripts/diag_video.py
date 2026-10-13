@@ -1,34 +1,43 @@
-"""Diagnóstico temporário: os MP4 do g1 tocam fora do g1?"""
-import re, sys, urllib.request
+"""Diagnóstico temporário: por que os MP4 do g1 dão 400?"""
+import re, sys, urllib.request, urllib.error
 sys.path.insert(0, "scripts")
 import fetch_news as f
 
 feed = "https://g1.globo.com/rss/g1/"
-links = [n["link"] for n in f.parse(f.fetch(feed), feed)][:12]
-tested = 0
+links = [n["link"] for n in f.parse(f.fetch(feed), feed)][:10]
+done = 0
 for link in links:
-    html = f.fetch(link, timeout=15).decode("utf-8", "replace")
-    mp4s = re.findall(r'itemprop="contentUrl" content="([^"]+\.mp4)"', html)
-    subs = re.findall(r'subscriber-only="(\w+)"', html)
-    thumbs = re.findall(r'itemprop="thumbnailUrl" content="([^"]+)"', html)
-    print(link, "\n  mp4:", len(mp4s), "subscriber-only:", subs, "thumbs:", thumbs[:2])
-    for url in mp4s[:1]:
-        for ref in (None, "https://rajegames21-pixel.github.io/"):
-            headers = {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", "Range": "bytes=0-1023"}
-            if ref:
-                headers["Referer"] = ref
-            try:
-                with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=15) as r:
-                    print(f"  GET ref={ref}: {r.status} {r.headers.get('Content-Type')} {r.headers.get('Content-Range')} acao={r.headers.get('Access-Control-Allow-Origin')}")
-            except Exception as e:
-                print(f"  GET ref={ref}: FAIL {e}")
-        x720 = re.sub(r"/x240/", "/x720/", thumbs[0]) if thumbs else ""
-        if x720:
-            try:
-                with urllib.request.urlopen(urllib.request.Request(x720, headers={"User-Agent": "Mozilla/5.0"}), timeout=15) as r:
-                    print("  poster x720:", r.status, r.headers.get("Content-Type"))
-            except Exception as e:
-                print("  poster x720: FAIL", e)
-        tested += 1
-    if tested >= 5:
+    page = f.fetch(link, timeout=15).decode("utf-8", "replace")
+    mp4s = re.findall(r'itemprop="contentUrl" content="([^"]+\.mp4[^"]*)"', page)
+    if not mp4s:
+        continue
+    url = mp4s[0]
+    print("URL:", url)
+    vid = re.search(r"/(\d+)[_-]", url).group(1)
+    for m in re.finditer(r"vodstreaming[^\"' ]{0,300}", page):
+        print("  ocorrência:", m.group(0)[:300])
+        break
+    for label, headers, method in [
+        ("GET sem range", {"User-Agent": "Mozilla/5.0"}, "GET"),
+        ("HEAD", {"User-Agent": "Mozilla/5.0"}, "HEAD"),
+        ("GET referer g1", {"User-Agent": "Mozilla/5.0", "Referer": "https://g1.globo.com/", "Range": "bytes=0-1023"}, "GET"),
+    ]:
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers, method=method), timeout=15) as r:
+                print(f"  {label}: {r.status} {r.headers.get('Content-Type')} len={r.headers.get('Content-Length')}")
+        except urllib.error.HTTPError as e:
+            print(f"  {label}: HTTP {e.code} body={e.read()[:200]!r}")
+        except Exception as e:
+            print(f"  {label}: FAIL {e}")
+    # API pública de vídeo da Globo
+    for api in [f"https://api.video.globo.com/videos/{vid}.json", f"https://playback.video.globo.com/v4/video-session"]:
+        try:
+            with urllib.request.urlopen(urllib.request.Request(api, headers={"User-Agent": "Mozilla/5.0"}), timeout=15) as r:
+                print(f"  {api}: {r.status} {r.read()[:300]!r}")
+        except urllib.error.HTTPError as e:
+            print(f"  {api}: HTTP {e.code}")
+        except Exception as e:
+            print(f"  {api}: FAIL {e}")
+    done += 1
+    if done >= 2:
         break

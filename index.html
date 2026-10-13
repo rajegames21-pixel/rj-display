@@ -207,6 +207,13 @@
                     <div id="news-image-placeholder" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-blue-500/20 to-purple-500/20">
                         <i class="fa-regular fa-newspaper text-6xl text-blue-500/50"></i>
                     </div>
+                    <video id="news-video" muted playsinline preload="auto" class="absolute inset-0 w-full h-full object-cover bg-black hidden"></video>
+                    <div id="video-controls" class="hidden absolute top-3 left-3 right-3 flex items-center justify-between">
+                        <span class="bg-black/60 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full"><i class="fa-solid fa-play mr-1"></i>Vídeo</span>
+                        <button id="video-sound" onclick="event.stopPropagation(); toggleSound()" class="w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center active:scale-95 transition" title="Som">
+                            <i class="fa-solid fa-volume-xmark"></i>
+                        </button>
+                    </div>
                     <div id="image-dots" class="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5"></div>
                 </div>
 
@@ -748,6 +755,7 @@
             newsTime.textContent = '';
             newsCounter.textContent = '0/0';
             newsArticle.innerHTML = '';
+            stopVideo();
             showImages([]);
             updateMoreHint();
         }
@@ -837,9 +845,95 @@
 
         function restartProgress() {
             newsProgress.classList.remove('running');
+            newsProgress.style.width = '';
             void newsProgress.offsetWidth; // trigger reflow
-            if (newsList.length > 1) newsProgress.classList.add('running');
+            if (newsList.length > 1 && !videoActive) newsProgress.classList.add('running');
         }
+
+        // --- Vídeo: se a matéria tem vídeo, ele toca inteiro no lugar da imagem.
+        // A próxima notícia só entra quando o vídeo termina; depois do vídeo
+        // as fotos aparecem pelo tempo normal.
+        const newsVideo = document.getElementById('news-video');
+        const videoControls = document.getElementById('video-controls');
+        let videoActive = false;
+        let videoItem = null;
+        let videoStartTimer = null;
+        let soundOn = storageGet('rjc_sound', false);
+
+        function updateSoundIcon() {
+            document.querySelector('#video-sound i').className = `fa-solid ${soundOn ? 'fa-volume-high' : 'fa-volume-xmark'}`;
+        }
+
+        function toggleSound() {
+            soundOn = !soundOn;
+            storageSet('rjc_sound', soundOn);
+            newsVideo.muted = !soundOn;
+            updateSoundIcon();
+            if (videoActive && newsVideo.paused && !isHolding) newsVideo.play().catch(() => {});
+        }
+
+        function stopVideo() {
+            clearTimeout(videoStartTimer);
+            videoActive = false;
+            videoItem = null;
+            newsVideo.pause();
+            newsVideo.removeAttribute('src');
+            newsVideo.removeAttribute('poster');
+            newsVideo.load();
+            newsVideo.classList.add('hidden');
+            videoControls.classList.add('hidden');
+        }
+
+        function playVideoNow() {
+            newsVideo.muted = !soundOn;
+            return newsVideo.play().catch(() => {
+                // Navegador bloqueou o som: toca sem som
+                newsVideo.muted = true;
+                return newsVideo.play();
+            });
+        }
+
+        // Vídeo terminou ou falhou: mostra as fotos e segue o ritmo normal
+        function finishVideo(item) {
+            if (videoItem !== item) return;
+            stopVideo();
+            showImages(item.images && item.images.length ? item.images : (item.image ? [item.image] : []));
+            if (!isHolding) {
+                resetTimer();
+                restartProgress();
+            }
+        }
+
+        function startVideo(item) {
+            const video = item.videos[0];
+            stopVideo();
+            showImages([]);
+            videoActive = true;
+            videoItem = item;
+            clearInterval(autoRotateInterval);
+            newsProgress.classList.remove('running');
+            newsProgress.style.width = '0%';
+
+            newsVideo.poster = video.poster || item.image || '';
+            newsVideo.src = video.src;
+            newsVideo.classList.remove('hidden');
+            videoControls.classList.remove('hidden');
+            newsImagePlaceholder.classList.add('hidden');
+            updateSoundIcon();
+
+            // Se não começar a tocar em 10 s, desiste e mostra as fotos
+            videoStartTimer = setTimeout(() => finishVideo(item), 10000);
+            if (!isHolding) playVideoNow().catch(() => finishVideo(item));
+        }
+
+        newsVideo.addEventListener('playing', () => clearTimeout(videoStartTimer));
+        newsVideo.addEventListener('timeupdate', () => {
+            if (videoActive && newsVideo.duration) {
+                newsProgress.style.width = `${(newsVideo.currentTime / newsVideo.duration) * 100}%`;
+            }
+        });
+        newsVideo.addEventListener('ended', () => finishVideo(videoItem));
+        newsVideo.addEventListener('error', () => { if (videoActive) finishVideo(videoItem); });
 
         function renderNews() {
             newsTag.textContent = currentRegion === 'BR' ? 'Brasil' : REGIONS[currentRegion].name;
@@ -862,7 +956,12 @@
             // Notícia nova: sai do modo leitura e volta o texto para o topo
             newsContainer.classList.remove('reading');
             newsBody.scrollTop = 0;
-            showImages(item.images && item.images.length ? item.images : (item.image ? [item.image] : []));
+            if (item.videos && item.videos.length) {
+                startVideo(item);
+            } else {
+                stopVideo();
+                showImages(item.images && item.images.length ? item.images : (item.image ? [item.image] : []));
+            }
             renderArticle(item);
             updateMoreHint();
 
@@ -913,12 +1012,18 @@
 
         function pauseRotation() {
             clearInterval(autoRotateInterval);
-            newsProgress.classList.remove('running');
+            if (videoActive) newsVideo.pause();
+            else newsProgress.classList.remove('running');
             pausedBadge.classList.remove('hidden');
         }
 
         function resumeRotation() {
             pausedBadge.classList.add('hidden');
+            if (videoActive) {
+                const item = videoItem;
+                playVideoNow().catch(() => finishVideo(item));
+                return;
+            }
             resetTimer();
             restartProgress();
         }
@@ -1131,6 +1236,7 @@
 
         // Auto rotation
         function startTimer() {
+            if (videoActive) return; // o vídeo decide quando passar
             autoRotateInterval = setInterval(nextNews, ROTATE_MS);
         }
         function resetTimer() {
