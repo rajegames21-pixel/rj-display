@@ -16,6 +16,7 @@ import sys
 import time
 import unicodedata
 import urllib.parse
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -139,6 +140,10 @@ def parse(xml_bytes, url):
         get = lambda tag: (item.findtext(tag) or "").strip()
         title, link, description = get("title"), get("link"), get("description")
         source = get("source") or default_source
+        # Site de origem (para o logo quando não houver foto)
+        src_el = item.find("source")
+        site_url = (src_el.get("url") if src_el is not None else "") or ("" if is_google else link)
+        site = urllib.parse.urlparse(site_url).netloc.removeprefix("www.")
         if is_google:
             cut = title.rfind(" - ")
             if cut > 0:
@@ -155,7 +160,7 @@ def parse(xml_bytes, url):
         if title and link:
             items.append({
                 "id": link, "link": link, "title": title, "summary": summary,
-                "source": source, "image": find_image(item, description), "date": date,
+                "source": source, "site": site, "image": find_image(item, description), "date": date,
             })
     return items
 
@@ -296,7 +301,9 @@ def article_id(link):
     return hashlib.sha1(link.encode()).hexdigest()[:16]
 
 
-MAX_GOOGLE_RESOLVE = 250   # notícias do Google resolvidas por execução
+MAX_GOOGLE_RESOLVE = 400   # notícias do Google resolvidas por execução
+GOOGLE_WORKERS = 4         # consultas ao Google em paralelo
+GOOGLE_MAX_BLOCKS = 15     # notícias bloqueadas (429) antes de desistir da rodada
 META_TAG = re.compile(r"<meta\b[^>]*>", re.I)
 
 
@@ -346,36 +353,71 @@ def resolve_google(link):
     return {"url": url, "image": image if image.startswith("http") else "", "summary": summary[:400]}
 
 
+def google_key(n):
+    # O link do Google muda a cada consulta; título + fonte não mudam
+    return f"{norm(n['title'])}|{n['source']}"
+
+
+class RateLimited(Exception):
+    pass
+
+
 def attach_google(results):
     """Notícias do Google: troca pelo link original, com foto e resumo do site."""
     cache_file = "google.json"
     prev = PREV_DIR / cache_file if PREV_DIR else None
     cache = json.loads(prev.read_text(encoding="utf-8")) if prev and prev.exists() else {}
+    cache = {k: v for k, v in cache.items() if "|" in k}  # descarta o formato antigo (por link)
 
-    links = {n["link"] for news in results.values() for n in news if "news.google.com" in n["link"]}
-    todo = [l for l in links if l not in cache]
+    google = [n for news in results.values() for n in news if "news.google.com" in n["link"]]
+    keys = {google_key(n) for n in google}
+    # Mais recentes primeiro: são as que aparecem antes na tela
+    todo, queued = [], set()
+    for n in sorted(google, key=lambda n: n["date"], reverse=True):
+        key = google_key(n)
+        if key not in cache and key not in queued:
+            queued.add(key)
+            todo.append((key, n["link"]))
 
-    def get(link):
-        try:
-            return link, resolve_google(link)
-        except Exception as err:
-            print(f"FAIL google {link[:80]}: {err}")
-            return link, None
+    # O Google bloqueia rajadas (HTTP 429): poucas consultas em paralelo,
+    # nova tentativa com espera e, se o bloqueio continuar, para a rodada.
+    blocked = {"count": 0}
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        for link, info in pool.map(get, todo[:MAX_GOOGLE_RESOLVE]):
+    def get(job):
+        key, link = job
+        if blocked["count"] >= GOOGLE_MAX_BLOCKS:
+            return key, None
+        for wait in (0, 5, 15):
+            time.sleep(wait)
+            try:
+                return key, resolve_google(link)
+            except urllib.error.HTTPError as err:
+                if err.code != 429:
+                    print(f"FAIL google {link[:80]}: {err}")
+                    return key, None
+            except Exception as err:
+                print(f"FAIL google {link[:80]}: {err}")
+                return key, None
+        blocked["count"] += 1
+        return key, None
+
+    with ThreadPoolExecutor(max_workers=GOOGLE_WORKERS) as pool:
+        for key, info in pool.map(get, todo[:MAX_GOOGLE_RESOLVE]):
             if info is not None:
-                cache[link] = info
+                cache[key] = info
 
-    cache = {l: v for l, v in cache.items() if l in links}
+    cache = {k: v for k, v in cache.items() if k in keys}
     (OUT_DIR / cache_file).write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
 
     for news in results.values():
         for n in news:
-            info = cache.get(n["link"])
+            if "news.google.com" not in n["link"]:
+                continue
+            info = cache.get(google_key(n))
             if not info or not info["url"]:
                 continue
             n["link"] = info["url"]
+            n["site"] = urllib.parse.urlparse(info["url"]).netloc.removeprefix("www.")
             if info["image"]:
                 n["image"] = info["image"]
                 n["images"] = [info["image"]]
@@ -383,8 +425,10 @@ def attach_google(results):
                 n["summary"] = info["summary"]
 
     ok = [v for v in cache.values() if v["url"]]
+    pending = len([1 for k, _ in todo if k not in cache])
     print(f"Google: {len(ok)} resolvidas ({sum(1 for v in ok if v['image'])} com foto), "
-          f"{min(len(todo), MAX_GOOGLE_RESOLVE)} agora, {max(0, len(todo) - MAX_GOOGLE_RESOLVE)} para a próxima")
+          f"{len(todo) - pending} novas agora, {pending} para a próxima"
+          + (" (parou: Google bloqueando)" if blocked["count"] >= GOOGLE_MAX_BLOCKS else ""))
 
 
 def attach_articles(results):

@@ -230,8 +230,13 @@
                 <div id="news-media" class="w-[38%] shrink-0 relative bg-zinc-100 dark:bg-zinc-900 overflow-hidden">
                     <img id="news-image-a" alt="" referrerpolicy="no-referrer" class="news-img absolute inset-0 w-full h-full object-cover opacity-0">
                     <img id="news-image-b" alt="" referrerpolicy="no-referrer" class="news-img absolute inset-0 w-full h-full object-cover opacity-0">
-                    <div id="news-image-placeholder" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-blue-500/20 to-purple-500/20">
-                        <i class="fa-regular fa-newspaper text-6xl text-blue-500/50"></i>
+                    <!-- Sem foto: logo e nome do site de origem (ou ícone de jornal) -->
+                    <div id="news-image-placeholder" class="absolute inset-0 flex flex-col items-center justify-center gap-4 p-6 text-center bg-gradient-to-br from-blue-500/20 to-purple-500/20">
+                        <div id="placeholder-logo-box" class="hidden w-24 h-24 rounded-3xl bg-white shadow-xl items-center justify-center p-4">
+                            <img id="placeholder-logo" alt="" referrerpolicy="no-referrer" class="w-full h-full object-contain">
+                        </div>
+                        <i id="placeholder-icon" class="fa-regular fa-newspaper text-6xl text-blue-500/50"></i>
+                        <span id="placeholder-source" class="text-sm font-semibold text-zinc-600 dark:text-zinc-300 line-clamp-2"></span>
                     </div>
                     <!-- Matéria com vídeo: capa primeiro + selo; o toque abre o vídeo no g1 -->
                     <div id="video-badge" class="hidden absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -326,7 +331,7 @@
     <script>
         // Versão do app. Ao publicar uma mudança, atualize aqui E em version.json:
         // quem estiver com o RJC aberto recarrega sozinho para a versão nova.
-        const APP_VERSION = '2026.10.13-1';
+        const APP_VERSION = '2026.10.13-2';
 
         // --- Helpers ---
         function storageGet(key, fallback) {
@@ -789,6 +794,41 @@
         const favIcon = document.getElementById('news-fav-icon');
         document.documentElement.style.setProperty('--rotate-ms', `${ROTATE_MS}ms`);
 
+        // Logo do site de origem, para notícias sem foto
+        function itemSite(item) {
+            if (item.site) return item.site;
+            try {
+                const host = new URL(item.link).hostname.replace(/^www\./, '');
+                return host === 'news.google.com' ? '' : host;
+            } catch (e) {
+                return '';
+            }
+        }
+
+        function renderSourcePlaceholder(item) {
+            const site = item ? itemSite(item) : '';
+            const logoBox = document.getElementById('placeholder-logo-box');
+            const logo = document.getElementById('placeholder-logo');
+            const icon = document.getElementById('placeholder-icon');
+            document.getElementById('placeholder-source').textContent = item ? item.source || site : '';
+            const showIcon = () => {
+                logoBox.classList.add('hidden');
+                logoBox.classList.remove('flex');
+                icon.classList.remove('hidden');
+            };
+            if (!site) return showIcon();
+            logo.onload = () => {
+                // O serviço devolve um globo genérico de 16px quando não acha o logo
+                if (logo.naturalWidth < 32) return showIcon();
+                logoBox.classList.remove('hidden');
+                logoBox.classList.add('flex');
+                icon.classList.add('hidden');
+            };
+            logo.onerror = showIcon;
+            showIcon();
+            logo.src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(site)}&sz=128`;
+        }
+
         function showMessage(title, summary) {
             newsTitle.textContent = title;
             newsSummary.textContent = summary;
@@ -796,6 +836,7 @@
             newsTime.textContent = '';
             newsCounter.textContent = '0/0';
             newsArticle.innerHTML = '';
+            renderSourcePlaceholder(null);
             showImages([]);
             updateMoreHint();
         }
@@ -919,6 +960,7 @@
             newsContainer.classList.remove('reading');
             newsBody.scrollTop = 0;
             // Com vídeo, a capa dele vem primeiro (o vídeo só toca no g1)
+            renderSourcePlaceholder(item);
             const posters = (item.videos || []).map(v => v.poster).filter(Boolean);
             const photos = item.images && item.images.length ? item.images : (item.image ? [item.image] : []);
             showImages([...posters, ...photos]);
