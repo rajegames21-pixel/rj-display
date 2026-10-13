@@ -302,6 +302,14 @@
                 </div>
 
                 <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Cidades</label>
+                    <div class="grid grid-cols-3 gap-2" id="city-buttons">
+                        <!-- Preenchido via JS (lista do robô: cidades.json) -->
+                    </div>
+                    <p class="text-xs text-zinc-500 mt-2"><i class="fa-solid fa-location-dot text-blue-500 mr-1"></i>marca a sua cidade. Para incluir outra cidade, adicione em <b>cidades.json</b> no GitHub.</p>
+                </div>
+
+                <div>
                     <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Aparência</label>
                     <div class="grid grid-cols-3 gap-3" id="theme-buttons">
                         <button data-theme="dark" onclick="setTheme('dark')" class="theme-btn rounded-xl py-3 text-sm transition"><i class="fa-solid fa-moon mr-1"></i> Escuro</button>
@@ -343,7 +351,7 @@
     <script>
         // Versão do app. Ao publicar uma mudança, atualize aqui E em version.json:
         // quem estiver com o RJC aberto recarrega sozinho para a versão nova.
-        const APP_VERSION = '2026.10.13-5';
+        const APP_VERSION = '2026.10.13-6';
 
         // --- Helpers ---
         function storageGet(key, fallback) {
@@ -417,7 +425,11 @@
             policia: { label: 'Polícia', icon: 'fa-shield-halved' },
             videos: { label: 'Vídeos', icon: 'fa-circle-play' }
         };
-        let selectedCats = storageGet('rjc_cats', ['destaques']).filter(c => CATEGORIES[c]);
+        // Cidades acompanhadas pelo robô (news/cidades/index.json); escolhidas
+        // ficam em selectedCats como "cidade:<slug>"
+        let cityList = storageGet('rjc_cities_index', []);
+        const isCitySlug = c => typeof c === 'string' && c.startsWith('cidade:');
+        let selectedCats = storageGet('rjc_cats', ['destaques']).filter(c => CATEGORIES[c] || isCitySlug(c));
         if (selectedCats.length === 0) selectedCats = ['destaques'];
 
         let currentRegion = storageGet('rjc_region', 'BR');
@@ -485,6 +497,7 @@
                 const lat = pos.coords.latitude.toFixed(3);
                 const lon = pos.coords.longitude.toFixed(3);
                 userLocation = { lat, lon, city: await reverseGeocode(lat, lon) };
+                renderCityButtons(); // marca a cidade do usuário
                 fetchWeather();
             }, () => {
                 userLocation = null; // usuário recusou: fica Brasília / capital
@@ -714,13 +727,64 @@
             return Array.isArray(data.items) ? data.items : [];
         }
 
+        async function loadCity(slug) {
+            const text = await fetchWithTimeout(`${NEWS_DATA_URL}cidades/${slug}.json?v=${Math.floor(Date.now() / 300000)}`, 10000);
+            const data = JSON.parse(text);
+            return Array.isArray(data.items) ? data.items : [];
+        }
+
+        function cityName(slug) {
+            const city = cityList.find(c => c.slug === slug);
+            return city ? city.nome : slug.replace(/-[a-z]{2}$/, '').replace(/-/g, ' ');
+        }
+
+        async function loadCityList() {
+            try {
+                const text = await fetchWithTimeout(`${NEWS_DATA_URL}cidades/index.json?v=${Math.floor(Date.now() / 300000)}`, 10000);
+                const list = JSON.parse(text);
+                if (Array.isArray(list)) {
+                    cityList = list;
+                    storageSet('rjc_cities_index', list);
+                    renderCityButtons();
+                }
+            } catch (e) {
+                // Sem conexão: usa a lista guardada
+            }
+        }
+
+        function normalizePlace(name) {
+            return String(name || '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '');
+        }
+
+        function renderCityButtons() {
+            const box = document.getElementById('city-buttons');
+            if (!cityList.length) {
+                box.innerHTML = '<p class="col-span-3 text-xs text-zinc-500">Carregando cidades…</p>';
+                return;
+            }
+            const myCity = normalizePlace(userLocation && userLocation.city);
+            box.innerHTML = cityList.map(c => {
+                const slug = `cidade:${c.slug}`;
+                const active = selectedCats.includes(slug);
+                const mine = myCity && normalizePlace(c.nome) === myCity;
+                return `<button onclick="toggleCategory('${slug}')" class="rounded-xl px-2 py-2.5 text-xs transition truncate ${active
+                    ? 'bg-blue-600 text-white font-semibold shadow-lg shadow-blue-500/20'
+                    : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-medium hover:bg-zinc-200 dark:hover:bg-zinc-700'}">
+                    <i class="fa-solid ${mine ? 'fa-location-dot' : 'fa-city'} mr-1"></i>${escapeHtml(c.nome)}</button>`;
+            }).join('');
+        }
+
         // Junta as categorias escolhidas, alternando entre elas para variar
         async function loadSelectedNews(code) {
             const regionLabel = code === 'BR' ? 'Brasil' : REGIONS[code].name;
             const lists = await Promise.all(selectedCats.map(async slug => {
                 try {
-                    const items = slug === 'destaques' ? await loadNews(code) : await loadCategory(slug);
-                    const tag = slug === 'destaques' ? regionLabel : CATEGORIES[slug].label;
+                    const items = slug === 'destaques' ? await loadNews(code)
+                        : isCitySlug(slug) ? await loadCity(slug.slice(7))
+                        : await loadCategory(slug);
+                    const tag = slug === 'destaques' ? regionLabel
+                        : isCitySlug(slug) ? cityName(slug.slice(7))
+                        : CATEGORIES[slug].label;
                     return items.map(n => Object.assign({}, n, { tag }));
                 } catch (err) {
                     console.warn(`Categoria ${slug} indisponível:`, err);
@@ -1377,6 +1441,7 @@
                     : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-medium hover:bg-zinc-200 dark:hover:bg-zinc-700'}">
                     <i class="fa-solid ${c.icon} mr-1"></i>${escapeHtml(label)}</button>`;
             }).join('');
+            renderCityButtons();
         }
 
         let categoryRefreshTimer;
@@ -1733,6 +1798,7 @@
         // Init
         applyTheme();
         populateRegions();
+        loadCityList();
         initBattery();
         renderWakeToggle();
         updateWakeLock();
