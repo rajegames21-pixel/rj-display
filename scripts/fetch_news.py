@@ -3,7 +3,12 @@
 
 Roda no GitHub Actions (sem restrição de CORS). O site lê os arquivos
 gerados em news/<UF>.json a partir da branch `news-data`.
+
+Para as matérias do g1, também abre a página da notícia e salva o texto
+completo e as fotos em news/articles/<id>.json. Matérias já baixadas em
+execuções anteriores são reaproveitadas (pasta passada como 2º argumento).
 """
+import hashlib
 import html
 import json
 import re
@@ -15,6 +20,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
 REGIONS = {
@@ -32,8 +38,12 @@ REGIONS = {
 GOOGLE = "https://news.google.com/rss"
 GOOGLE_PARAMS = "hl=pt-BR&gl=BR&ceid=BR:pt-419"
 MEDIA_NS = "{http://search.yahoo.com/mrss/}"
-MAX_NEWS = 80
+MAX_NEWS = 150
+MAX_ARTICLE_FETCHES = 400   # matérias novas baixadas por execução
+MAX_ARTICLE_CHARS = 12000
+MAX_IMAGES = 6
 OUT_DIR = Path(sys.argv[1] if len(sys.argv) > 1 else "news")
+PREV_DIR = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 
 
 def feeds_for(code):
@@ -51,9 +61,9 @@ def feeds_for(code):
     ]
 
 
-def fetch(url):
+def fetch(url, timeout=20):
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (RJC Display news bot)"})
-    with urllib.request.urlopen(req, timeout=20) as res:
+    with urllib.request.urlopen(req, timeout=timeout) as res:
         return res.read()
 
 
@@ -90,8 +100,6 @@ def parse(xml_bytes, url):
                     source = title[cut + 3:]
                 title = title[:cut]
         summary = "" if is_google else html_to_text(description)
-        if len(summary) > 240:
-            summary = summary[:237].rstrip() + "…"
         if summary == title:
             summary = ""
         try:
@@ -133,11 +141,133 @@ def build(code):
     return news[:MAX_NEWS]
 
 
+class ArticleParser(HTMLParser):
+    """Extrai parágrafos e fotos de uma matéria do g1."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.paragraphs, self.fallback, self.images = [], [], []
+        self._p = None          # texto do <p> atual
+        self._p_main = False    # <p> é do corpo da matéria (content-text)
+        self._skip = 0          # dentro de <script>/<style>
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        cls = a.get("class") or ""
+        if tag in ("script", "style", "noscript"):
+            self._skip += 1
+        elif tag == "p":
+            self._p, self._p_main = [], "content-text" in cls
+        elif tag == "meta" and a.get("property") == "og:image" and a.get("content"):
+            self.images.insert(0, a["content"])
+        elif tag in ("img", "amp-img", "source"):
+            src = a.get("src") or a.get("data-src") or (a.get("srcset") or "").split(" ")[0]
+            if src.startswith("http") and "glbimg.com" in src and (
+                    "content-media" in cls or "image" in cls or tag == "img"):
+                self.images.append(src)
+
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "noscript"):
+            self._skip = max(0, self._skip - 1)
+        elif tag == "p" and self._p is not None:
+            text = re.sub(r"\s+", " ", "".join(self._p)).strip()
+            if text:
+                (self.paragraphs if self._p_main else self.fallback).append(text)
+            self._p = None
+
+    def handle_data(self, data):
+        if self._p is not None and not self._skip:
+            self._p.append(data)
+
+
+def image_key(url):
+    # A mesma foto aparece em vários tamanhos; compara pelo nome do arquivo
+    return url.split("?")[0].rsplit("/", 1)[-1]
+
+
+def fetch_article(link):
+    parser = ArticleParser()
+    parser.feed(fetch(link, timeout=15).decode("utf-8", "replace"))
+    paragraphs = parser.paragraphs or [p for p in parser.fallback if len(p) > 80]
+    text, total = [], 0
+    for p in paragraphs:
+        if total + len(p) > MAX_ARTICLE_CHARS:
+            break
+        text.append(p)
+        total += len(p)
+    seen, images = set(), []
+    for img in parser.images:
+        key = image_key(img)
+        if key not in seen and not re.search(r"(logo|icon|avatar|sprite)", img, re.I):
+            seen.add(key)
+            images.append(img)
+    return {"paragraphs": text, "images": images[:MAX_IMAGES]}
+
+
+def article_id(link):
+    return hashlib.sha1(link.encode()).hexdigest()[:16]
+
+
+def attach_articles(results):
+    """Baixa (ou reaproveita) o texto completo e as fotos das matérias do g1."""
+    art_dir = OUT_DIR / "articles"
+    art_dir.mkdir(parents=True, exist_ok=True)
+    prev_dir = PREV_DIR / "articles" if PREV_DIR else None
+
+    links = {n["link"] for news in results.values() for n in news if "g1.globo.com" in n["link"]}
+    articles, to_fetch = {}, []
+    for link in links:
+        aid = article_id(link)
+        prev = prev_dir / f"{aid}.json" if prev_dir else None
+        if prev and prev.exists():
+            articles[link] = json.loads(prev.read_text(encoding="utf-8"))
+        else:
+            to_fetch.append(link)
+
+    def get(link):
+        try:
+            return link, fetch_article(link)
+        except Exception as err:
+            print(f"FAIL artigo {link}: {err}")
+            return link, None
+
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        for link, art in pool.map(get, to_fetch[:MAX_ARTICLE_FETCHES]):
+            if art:
+                articles[link] = art
+
+    for link, art in articles.items():
+        (art_dir / f"{article_id(link)}.json").write_text(json.dumps(art, ensure_ascii=False), encoding="utf-8")
+
+    for news in results.values():
+        for n in news:
+            art = articles.get(n["link"])
+            if not art:
+                continue
+            if art["paragraphs"]:
+                n["article"] = article_id(n["link"])
+            imgs = ([n["image"]] if n["image"] else []) + art["images"]
+            seen, uniq = set(), []
+            for img in imgs:
+                if image_key(img) not in seen:
+                    seen.add(image_key(img))
+                    uniq.append(img)
+            n["images"] = uniq[:MAX_IMAGES]
+            if not n["image"] and uniq:
+                n["image"] = uniq[0]
+
+    with_text = sum(1 for a in articles.values() if a["paragraphs"])
+    print(f"Matérias: {len(articles)} prontas ({with_text} com texto), "
+          f"{min(len(to_fetch), MAX_ARTICLE_FETCHES)} baixadas agora, "
+          f"{max(0, len(to_fetch) - MAX_ARTICLE_FETCHES)} ficam para a próxima")
+
+
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     codes = ["BR", *REGIONS]
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = dict(zip(codes, pool.map(build, codes)))
+    attach_articles(results)
     updated = int(time.time() * 1000)
     for code, news in results.items():
         (OUT_DIR / f"{code}.json").write_text(
