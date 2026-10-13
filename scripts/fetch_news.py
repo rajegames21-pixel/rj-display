@@ -35,6 +35,28 @@ REGIONS = {
     "RO": ("Rondônia", "rondonia"), "RR": ("Roraima", "roraima"), "SC": ("Santa Catarina", "santa-catarina"),
     "SP": ("São Paulo", "sao-paulo"), "SE": ("Sergipe", "sergipe"), "TO": ("Tocantins", "tocantins"),
 }
+# Categorias: slug -> (seção do g1 ou None, busca/tópico do Google Notícias)
+# Tópicos do Google começam com "topic:"; o resto é termo de busca.
+CATEGORIES = {
+    "politica": ("politica", "política"),
+    "economia": ("economia", "topic:BUSINESS"),
+    "mundo": ("mundo", "topic:WORLD"),
+    "tecnologia": ("tecnologia", "topic:TECHNOLOGY"),
+    "ciencia": ("ciencia", "topic:SCIENCE"),
+    "saude": ("saude", "topic:HEALTH"),
+    "esportes": (None, "topic:SPORTS"),
+    "cinema": ("pop-arte/cinema", "cinema OR filme OR série OR streaming"),
+    "musica": ("pop-arte/musica", "música OR cantor OR cantora OR show"),
+    "famosos": (None, "famosos OR celebridades OR fofoca OR BBB"),
+    "games": ("pop-arte/games", "games OR videogame OR PlayStation OR Xbox OR Nintendo"),
+    "educacao": ("educacao", "educação OR Enem OR escola OR universidade"),
+    "meio-ambiente": ("meio-ambiente", "meio ambiente OR clima OR desmatamento"),
+    "carros": ("carros", "carros OR automóvel OR montadora"),
+    "agro": ("economia/agronegocios", "agronegócio OR safra OR agro"),
+    "turismo": ("turismo-e-viagem", "turismo OR viagem OR destino"),
+    "concursos": ("trabalho-e-carreira/concursos", "concurso público OR edital"),
+    "policia": (None, "polícia OR crime OR operação policial"),
+}
 GOOGLE = "https://news.google.com/rss"
 GOOGLE_PARAMS = "hl=pt-BR&gl=BR&ceid=BR:pt-419"
 MEDIA_NS = "{http://search.yahoo.com/mrss/}"
@@ -42,11 +64,23 @@ MAX_NEWS = 150
 MAX_ARTICLE_FETCHES = 400   # matérias novas baixadas por execução
 MAX_ARTICLE_CHARS = 12000
 MAX_IMAGES = 6
+ARTICLE_VERSION = 2         # mude para rebaixar todas as matérias
+# Fotos que não são da matéria: miniaturas de vídeo, outros sites da Globo
+# e os cartões de "veja também" (recorte 810x456)
+NOT_ARTICLE_IMAGE = re.compile(r"video\.glbimg|s2-ge\.|s2-gshow\.|s2-globo|s2-valor|810x456/top|logo|icon|avatar|sprite", re.I)
 OUT_DIR = Path(sys.argv[1] if len(sys.argv) > 1 else "news")
 PREV_DIR = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 
 
 def feeds_for(code):
+    if code.startswith("cat:"):
+        section, google = CATEGORIES[code[4:]]
+        feeds = [f"https://g1.globo.com/rss/g1/{section}/"] if section else []
+        if google.startswith("topic:"):
+            feeds.append(f"{GOOGLE}/headlines/section/topic/{google[6:]}?{GOOGLE_PARAMS}")
+        else:
+            feeds.append(f"{GOOGLE}/search?q={urllib.parse.quote(google + ' when:1d')}&{GOOGLE_PARAMS}")
+        return feeds
     if code == "BR":
         return [
             "https://g1.globo.com/rss/g1/",
@@ -150,6 +184,7 @@ class ArticleParser(HTMLParser):
         self._p = None          # texto do <p> atual
         self._p_main = False    # <p> é do corpo da matéria (content-text)
         self._skip = 0          # dentro de <script>/<style>
+        self._media = []        # pilha de <div>/<figure>: True se é bloco de foto
 
     def handle_starttag(self, tag, attrs):
         a = dict(attrs)
@@ -160,15 +195,21 @@ class ArticleParser(HTMLParser):
             self._p, self._p_main = [], "content-text" in cls
         elif tag == "meta" and a.get("property") == "og:image" and a.get("content"):
             self.images.insert(0, a["content"])
-        elif tag in ("img", "amp-img", "source"):
-            src = a.get("src") or a.get("data-src") or (a.get("srcset") or "").split(" ")[0]
-            if src.startswith("http") and "glbimg.com" in src and (
-                    "content-media" in cls or "image" in cls or tag == "img"):
+        elif tag in ("div", "figure"):
+            self._media.append(tag == "figure" or "content-media" in cls)
+        elif tag in ("img", "amp-img"):
+            # Só fotos dentro do corpo da matéria (blocos de mídia/figure)
+            src = a.get("src") or a.get("data-src") or ""
+            in_media = any(self._media) or "content-media" in cls
+            if in_media and src.startswith("http") and "glbimg.com" in src and not NOT_ARTICLE_IMAGE.search(src):
                 self.images.append(src)
 
     def handle_endtag(self, tag):
         if tag in ("script", "style", "noscript"):
             self._skip = max(0, self._skip - 1)
+        elif tag in ("div", "figure"):
+            if self._media:
+                self._media.pop()
         elif tag == "p" and self._p is not None:
             text = re.sub(r"\s+", " ", "".join(self._p)).strip()
             if text:
@@ -198,10 +239,10 @@ def fetch_article(link):
     seen, images = set(), []
     for img in parser.images:
         key = image_key(img)
-        if key not in seen and not re.search(r"(logo|icon|avatar|sprite)", img, re.I):
+        if key not in seen:
             seen.add(key)
             images.append(img)
-    return {"paragraphs": text, "images": images[:MAX_IMAGES]}
+    return {"v": ARTICLE_VERSION, "paragraphs": text, "images": images[:MAX_IMAGES]}
 
 
 def article_id(link):
@@ -219,8 +260,9 @@ def attach_articles(results):
     for link in links:
         aid = article_id(link)
         prev = prev_dir / f"{aid}.json" if prev_dir else None
-        if prev and prev.exists():
-            articles[link] = json.loads(prev.read_text(encoding="utf-8"))
+        cached = json.loads(prev.read_text(encoding="utf-8")) if prev and prev.exists() else None
+        if cached and cached.get("v") == ARTICLE_VERSION:
+            articles[link] = cached
         else:
             to_fetch.append(link)
 
@@ -264,13 +306,15 @@ def attach_articles(results):
 
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    codes = ["BR", *REGIONS]
-    with ThreadPoolExecutor(max_workers=6) as pool:
+    codes = ["BR", *REGIONS, *(f"cat:{c}" for c in CATEGORIES)]
+    with ThreadPoolExecutor(max_workers=8) as pool:
         results = dict(zip(codes, pool.map(build, codes)))
     attach_articles(results)
     updated = int(time.time() * 1000)
+    (OUT_DIR / "cat").mkdir(exist_ok=True)
     for code, news in results.items():
-        (OUT_DIR / f"{code}.json").write_text(
+        name = f"cat/{code[4:]}" if code.startswith("cat:") else code
+        (OUT_DIR / f"{name}.json").write_text(
             json.dumps({"updated": updated, "items": news}, ensure_ascii=False), encoding="utf-8")
     total = sum(len(v) for v in results.values())
     print(f"\n{total} notícias salvas em {OUT_DIR}/")
