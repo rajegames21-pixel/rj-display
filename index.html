@@ -2,8 +2,16 @@
 <html lang="pt-BR" class="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>RJ Display - StandBy Mode</title>
+    <!-- Instalável na tela de início: abre sem barras do navegador -->
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#000000">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="RJ Display">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -35,6 +43,16 @@
             font-family: 'Inter', sans-serif;
             overflow: hidden;
             touch-action: manipulation;
+            height: 100vh;
+            height: 100dvh;
+        }
+
+        /* Respeita o notch/ilha dinâmica no modo horizontal */
+        .safe-area {
+            padding-top: max(0.75rem, env(safe-area-inset-top));
+            padding-bottom: max(1rem, env(safe-area-inset-bottom));
+            padding-left: max(1.5rem, env(safe-area-inset-left));
+            padding-right: max(1.5rem, env(safe-area-inset-right));
         }
         
         /* Smooth transitions for rotating content */
@@ -54,7 +72,7 @@
         ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 10px; }
     </style>
 </head>
-<body class="h-screen w-screen bg-standby-bg text-white select-none">
+<body class="w-screen bg-standby-bg text-white select-none">
 
     <!-- Portrait Warning Overlay (Forces Landscape UX) -->
     <div id="portrait-warning" class="fixed inset-0 z-[999] bg-black portrait:flex landscape:hidden flex-col items-center justify-center text-center p-8">
@@ -66,18 +84,29 @@
     </div>
 
     <!-- Main Application Structure (Only visible in Landscape) -->
-    <div class="portrait:hidden landscape:flex h-full w-full flex-col relative">
-        
-        <!-- Header / Status Bar -->
-        <header class="w-full px-8 py-5 flex items-center justify-between z-20 absolute top-0 left-0 right-0">
-            <div class="flex items-center space-x-3">
-                <div class="flex items-center space-x-2 bg-zinc-900/50 border border-zinc-800/50 px-3 py-1.5 rounded-full backdrop-blur-md">
-                    <i class="fa-solid fa-bolt text-emerald-400 text-sm"></i>
-                    <span class="text-xs font-medium text-zinc-300">Carregando (100%)</span>
+    <div class="portrait:hidden landscape:flex h-full w-full flex-col safe-area gap-3">
+
+        <!-- Top Bar: Hora, Data, Clima e Ações -->
+        <header class="w-full flex items-center justify-between gap-6 shrink-0">
+            <div class="flex items-center gap-5 min-w-0">
+                <h1 id="current-time" class="text-6xl lg:text-7xl font-mono font-bold tracking-tighter leading-none text-transparent bg-clip-text bg-gradient-to-br from-white to-zinc-500">
+                    00:00
+                </h1>
+                <div class="flex flex-col gap-1 min-w-0">
+                    <div class="text-blue-500 text-sm font-semibold tracking-widest uppercase flex items-center truncate">
+                        <i class="fa-regular fa-calendar mr-2"></i>
+                        <span id="current-date">Carregando data...</span>
+                    </div>
+                    <!-- Weather Widget (Open-Meteo Integration) -->
+                    <div class="flex items-center gap-2 text-sm text-zinc-400">
+                        <i class="fa-solid fa-cloud-sun text-blue-400" id="weather-icon"></i>
+                        <span id="weather-temp" class="font-bold text-white">--°C</span>
+                        <span id="weather-desc" class="truncate">Buscando clima local...</span>
+                    </div>
                 </div>
             </div>
 
-            <div class="flex items-center space-x-4">
+            <div class="flex items-center space-x-2 shrink-0">
                 <button onclick="openModal('favorites-modal')" class="text-zinc-500 hover:text-rose-500 transition relative p-2" title="Favoritos">
                     <i class="fa-solid fa-heart text-xl"></i>
                     <span id="fav-count" class="absolute top-0 right-0 w-4 h-4 bg-rose-600 text-[9px] font-bold rounded-full flex items-center justify-center hidden">0</span>
@@ -86,74 +115,42 @@
                     <i class="fa-solid fa-gear text-xl"></i>
                 </button>
                 <button onclick="toggleFullscreen()" class="text-zinc-500 hover:text-white transition p-2" title="Tela Cheia">
-                    <i class="fa-solid fa-expand text-xl"></i>
+                    <i class="fa-solid fa-expand text-xl" id="fullscreen-icon"></i>
                 </button>
             </div>
         </header>
 
-        <!-- Main Dashboard Split -->
-        <main class="flex-1 flex flex-row items-stretch justify-center w-full px-8 py-20 gap-8 h-full">
-            
-            <!-- Left Side: Clock & Weather -->
-            <div class="flex-1 flex flex-col justify-center items-start pl-4 md:pl-12">
-                <div class="text-blue-500 text-sm font-semibold tracking-widest uppercase mb-4 flex items-center">
-                    <i class="fa-regular fa-calendar mr-2"></i>
-                    <span id="current-date">Carregando data...</span>
-                </div>
-                
-                <h1 id="current-time" class="text-8xl lg:text-[140px] font-mono font-bold tracking-tighter leading-none mb-8 text-transparent bg-clip-text bg-gradient-to-br from-white to-zinc-500">
-                    00:00
-                </h1>
-
-                <!-- Weather Widget (Open-Meteo Integration) -->
-                <div class="flex items-center space-x-5 bg-zinc-900/30 border border-zinc-800/50 p-4 rounded-3xl backdrop-blur-sm">
-                    <div id="weather-icon-container" class="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center text-2xl text-blue-400">
-                        <i class="fa-solid fa-cloud-sun" id="weather-icon"></i>
-                    </div>
-                    <div>
-                        <div class="flex items-end space-x-2">
-                            <span id="weather-temp" class="text-3xl font-bold">--°C</span>
-                        </div>
-                        <p id="weather-desc" class="text-sm text-zinc-400">Buscando clima local...</p>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Right Side: News Panel -->
-            <div class="flex-1 flex flex-col justify-center max-w-2xl">
-                
-                <div class="flex items-center justify-between mb-4">
-                    <h2 class="text-xs font-semibold uppercase tracking-widest text-zinc-500">RJ News • <span id="active-category" class="text-white">Destaques</span></h2>
-                    <div class="flex items-center space-x-3 text-zinc-500">
-                        <button onclick="prevNews()" class="hover:text-white transition"><i class="fa-solid fa-chevron-left"></i></button>
-                        <span id="news-counter" class="text-xs font-mono">1/5</span>
-                        <button onclick="nextNews()" class="hover:text-white transition"><i class="fa-solid fa-chevron-right"></i></button>
-                    </div>
-                </div>
-
-                <!-- News Card -->
-                <div id="news-container" class="bg-standby-card border border-standby-border rounded-[2rem] p-8 shadow-2xl relative transition-all duration-500 group flex flex-col h-[320px]">
-                    <div class="flex justify-between items-start mb-4">
+        <!-- News Panel: ocupa todo o resto da tela -->
+        <main class="flex-1 min-h-0 flex flex-col w-full">
+            <div id="news-container" class="flex-1 min-h-0 bg-standby-card border border-standby-border rounded-[2rem] px-8 py-6 shadow-2xl relative transition-all duration-500 flex flex-col">
+                <div class="flex justify-between items-center mb-3 shrink-0">
+                    <div class="flex items-center gap-3 min-w-0">
                         <span id="news-tag" class="px-3 py-1 rounded-full text-xs font-bold bg-zinc-800 text-zinc-300">Categoria</span>
+                        <h2 class="text-xs font-semibold uppercase tracking-widest text-zinc-500 truncate">RJ News • <span id="active-category" class="text-white">Destaques</span></h2>
+                    </div>
+                    <div class="flex items-center space-x-3 text-zinc-500 shrink-0">
+                        <button onclick="prevNews()" class="hover:text-white transition p-2"><i class="fa-solid fa-chevron-left"></i></button>
+                        <span id="news-counter" class="text-xs font-mono">1/5</span>
+                        <button onclick="nextNews()" class="hover:text-white transition p-2"><i class="fa-solid fa-chevron-right"></i></button>
                         <button onclick="toggleFavorite()" class="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-500 hover:bg-zinc-800 transition active:scale-95">
                             <i class="fa-regular fa-heart" id="news-fav-icon"></i>
                         </button>
                     </div>
-                    
-                    <h3 id="news-title" class="text-2xl lg:text-3xl font-bold leading-snug mb-3 text-zinc-100 line-clamp-3">
-                        Carregando as últimas notícias...
-                    </h3>
-                    
-                    <p id="news-summary" class="text-zinc-400 text-sm lg:text-base line-clamp-3 mb-auto">
-                        O algoritmo está selecionando as melhores atualizações de acordo com suas preferências.
-                    </p>
-
-                    <div class="mt-4 pt-4 border-t border-zinc-800/80 flex justify-between items-center text-xs text-zinc-500">
-                        <span id="news-source"><i class="fa-regular fa-newspaper mr-1"></i> RJ Source</span>
-                        <span id="news-time">agora mesmo</span>
-                    </div>
                 </div>
 
+                <div class="flex-1 min-h-0 flex flex-col justify-center overflow-hidden">
+                    <h3 id="news-title" class="text-[clamp(1.5rem,7vh,4.5rem)] font-bold leading-tight mb-3 text-zinc-100 line-clamp-3">
+                        Carregando as últimas notícias...
+                    </h3>
+                    <p id="news-summary" class="text-[clamp(1rem,4vh,2rem)] text-zinc-400 leading-snug line-clamp-3">
+                        O algoritmo está selecionando as melhores atualizações de acordo com suas preferências.
+                    </p>
+                </div>
+
+                <div class="mt-3 pt-3 border-t border-zinc-800/80 flex justify-between items-center text-xs text-zinc-500 shrink-0">
+                    <span id="news-source"><i class="fa-regular fa-newspaper mr-1"></i> RJ Source</span>
+                    <span id="news-time">agora mesmo</span>
+                </div>
             </div>
         </main>
     </div>
@@ -433,14 +430,69 @@
             renderNews(); // update main view icon if needed
         }
 
-        // Fullscreen
+        // --- Fullscreen ---
+        // Navegadores só permitem tela cheia após um toque do usuário, então:
+        // ao girar para horizontal tentamos entrar direto; se o navegador
+        // bloquear, o primeiro toque em qualquer lugar ativa a tela cheia.
+        const landscapeQuery = window.matchMedia('(orientation: landscape)');
+        let tapListenerArmed = false;
+
+        function isFullscreen() {
+            return !!(document.fullscreenElement || document.webkitFullscreenElement);
+        }
+
+        function enterFullscreen() {
+            const el = document.documentElement;
+            const request = el.requestFullscreen || el.webkitRequestFullscreen;
+            if (!request || isFullscreen()) return Promise.resolve();
+            try {
+                return Promise.resolve(request.call(el, { navigationUI: 'hide' })).catch(() => {});
+            } catch (err) {
+                return Promise.resolve();
+            }
+        }
+
+        function exitFullscreen() {
+            const exit = document.exitFullscreen || document.webkitExitFullscreen;
+            if (exit && isFullscreen()) exit.call(document);
+        }
+
+        function onFirstTap() {
+            tapListenerArmed = false;
+            if (landscapeQuery.matches) enterFullscreen();
+        }
+
+        function armTapToFullscreen() {
+            if (tapListenerArmed) return;
+            tapListenerArmed = true;
+            document.addEventListener('click', onFirstTap, { once: true, capture: true });
+        }
+
+        function autoFullscreen() {
+            if (!landscapeQuery.matches) return;
+            enterFullscreen().then(() => {
+                if (!isFullscreen()) armTapToFullscreen();
+            });
+        }
+
+        landscapeQuery.addEventListener('change', autoFullscreen);
+
+        function updateFullscreenIcon() {
+            document.getElementById('fullscreen-icon').className =
+                `fa-solid ${isFullscreen() ? 'fa-compress' : 'fa-expand'} text-xl`;
+        }
+        document.addEventListener('fullscreenchange', updateFullscreenIcon);
+        document.addEventListener('webkitfullscreenchange', updateFullscreenIcon);
+
         function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {
-                    console.log("Erro ao entrar em tela cheia:", err);
-                });
+            if (tapListenerArmed) {
+                document.removeEventListener('click', onFirstTap, { capture: true });
+                tapListenerArmed = false;
+            }
+            if (isFullscreen()) {
+                exitFullscreen();
             } else {
-                document.exitFullscreen();
+                enterFullscreen();
             }
         }
 
@@ -449,6 +501,7 @@
         renderNews();
         updateFavBadge();
         startTimer();
+        autoFullscreen();
 
     </script>
 </body>
