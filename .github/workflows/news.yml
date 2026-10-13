@@ -27,23 +27,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      # TEMPORÁRIO: em branches que não são a main, só diagnostica imagens
-      - name: Diagnóstico de imagens
-        if: github.ref != 'refs/heads/main'
-        run: python scripts/diag_images.py
-
       # Matérias já baixadas antes são reaproveitadas
       - name: Baixar dados anteriores
-        if: github.ref == 'refs/heads/main'
         run: git clone -q --depth 1 --branch news-data "https://github.com/${{ github.repository }}.git" "$RUNNER_TEMP/prev" || true
 
       - name: Buscar notícias
-        if: github.ref == 'refs/heads/main'
         run: python scripts/fetch_news.py "$RUNNER_TEMP/site/news" "$RUNNER_TEMP/prev/news"
 
       # Publica só os JSON na branch news-data (um único commit, sem histórico)
       - name: Publicar na branch news-data
-        if: github.ref == 'refs/heads/main'
         working-directory: ${{ runner.temp }}/site
         run: |
           git init -q -b news-data
