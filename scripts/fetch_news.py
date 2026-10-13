@@ -303,7 +303,7 @@ def article_id(link):
 
 MAX_GOOGLE_RESOLVE = 400   # notícias do Google resolvidas por execução
 GOOGLE_WORKERS = 4         # consultas ao Google em paralelo
-GOOGLE_MAX_BLOCKS = 15     # bloqueios (429) seguidos antes de desistir da rodada
+GOOGLE_MAX_BLOCKS = 15     # notícias bloqueadas (429) antes de desistir da rodada
 META_TAG = re.compile(r"<meta\b[^>]*>", re.I)
 
 
