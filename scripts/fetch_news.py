@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
@@ -489,6 +490,103 @@ def attach_articles(results):
           f"{max(0, len(to_fetch) - MAX_ARTICLE_FETCHES)} ficam para a próxima")
 
 
+# --- Vídeos do YouTube (categoria "Vídeos") ---
+# Canais de notícia que permitem incorporar os vídeos em outros sites.
+# O ID do canal é descoberto pelo @ e guardado em cache (youtube.json).
+YOUTUBE_CHANNELS = {
+    "@CNNbrasil": "CNN Brasil",
+    "@SBTNews": "SBT News",
+    "@BandJornalismo": "Band Jornalismo",
+    "@jovempannews": "Jovem Pan News",
+    "@UOL": "UOL",
+    "@globonews": "GloboNews",
+    "@recordnews": "Record News",
+    "@BBCBrasil": "BBC News Brasil",
+}
+ATOM = "{http://www.w3.org/2005/Atom}"
+YT = "{http://www.youtube.com/xml/schemas/2015}"
+MAX_EMBED_CHECKS = 300
+
+
+def youtube_channel_id(handle):
+    page = fetch(f"https://www.youtube.com/{handle}", timeout=15).decode("utf-8", "replace")
+    for pat in (r'"externalId":"(UC[\w-]{22})"', r'<meta itemprop="identifier" content="(UC[\w-]{22})"',
+                r'channel_id=(UC[\w-]{22})', r'"channelId":"(UC[\w-]{22})"'):
+        m = re.search(pat, page)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def youtube_embeddable(video_id):
+    """O oEmbed responde 401/403 quando o dono proibiu incorporar o vídeo."""
+    url = f"https://www.youtube.com/oembed?format=json&url=https://www.youtube.com/watch?v={video_id}"
+    try:
+        fetch(url, timeout=10)
+        return True
+    except urllib.error.HTTPError as err:
+        return False if err.code in (401, 403, 404) else None
+    except Exception:
+        return None
+
+
+def build_videos():
+    cache_file = "youtube.json"
+    prev = PREV_DIR / cache_file if PREV_DIR else None
+    cache = json.loads(prev.read_text(encoding="utf-8")) if prev and prev.exists() else {}
+    channels, embeds = cache.get("channels", {}), cache.get("embeds", {})
+
+    videos = []
+    for handle, name in YOUTUBE_CHANNELS.items():
+        try:
+            if not channels.get(handle):
+                channels[handle] = youtube_channel_id(handle)
+            cid = channels[handle]
+            if not cid:
+                print(f"FAIL youtube {handle}: canal não encontrado")
+                continue
+            root = ET.fromstring(fetch(f"https://www.youtube.com/feeds/videos.xml?channel_id={cid}"))
+            count = 0
+            for entry in root.iter(ATOM + "entry"):
+                vid = entry.findtext(YT + "videoId") or ""
+                title = (entry.findtext(ATOM + "title") or "").strip()
+                if not vid or not title:
+                    continue
+                desc = ""
+                for el in entry.iter():
+                    if el.tag.endswith("description") and el.text:
+                        desc = el.text.strip()
+                        break
+                try:
+                    date = int(datetime.fromisoformat(entry.findtext(ATOM + "published")).timestamp() * 1000)
+                except Exception:
+                    date = 0
+                videos.append({
+                    "id": f"yt:{vid}", "link": f"https://www.youtube.com/watch?v={vid}", "title": title,
+                    "summary": re.sub(r"\s+", " ", desc)[:400], "source": name, "site": "youtube.com",
+                    "image": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg", "youtube": vid, "date": date,
+                })
+                count += 1
+            print(f"ok   {count:3d}  youtube {handle} ({cid})")
+        except Exception as err:
+            print(f"FAIL youtube {handle}: {err}")
+
+    # Só vídeos que podem tocar fora do YouTube
+    todo = [v["youtube"] for v in videos if v["youtube"] not in embeds][:MAX_EMBED_CHECKS]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for vid, ok in zip(todo, pool.map(youtube_embeddable, todo)):
+            if ok is not None:
+                embeds[vid] = ok
+    current = {v["youtube"] for v in videos}
+    embeds = {k: v for k, v in embeds.items() if k in current}
+    (OUT_DIR / cache_file).write_text(json.dumps({"channels": channels, "embeds": embeds}), encoding="utf-8")
+
+    playable = [v for v in videos if embeds.get(v["youtube"])]
+    playable.sort(key=lambda v: v["date"], reverse=True)
+    print(f"YouTube: {len(videos)} vídeos, {len(playable)} podem tocar no RJC")
+    return playable[:MAX_NEWS]
+
+
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     codes = ["BR", *REGIONS, *(f"cat:{c}" for c in CATEGORIES)]
@@ -496,6 +594,7 @@ def main():
         results = dict(zip(codes, pool.map(build, codes)))
     attach_google(results)
     attach_articles(results)
+    results["cat:videos"] = build_videos()
     # Só publica notícias com foto ou vídeo (capa), para o app não ficar feio
     for code, news in results.items():
         results[code] = [n for n in news if n.get("image") or n.get("videos")][:MAX_NEWS]
