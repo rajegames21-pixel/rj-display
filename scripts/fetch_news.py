@@ -57,6 +57,11 @@ CATEGORIES = {
     "concursos": ("trabalho-e-carreira/concursos", "concurso público OR edital"),
     "policia": (None, "polícia OR crime OR operação policial"),
 }
+# Feeds extras (com foto) por categoria
+EXTRA_FEEDS = {
+    "esportes": ["https://ge.globo.com/rss/ge/"],
+    "famosos": ["https://gshow.globo.com/rss/gshow/", "https://g1.globo.com/rss/g1/pop-arte/"],
+}
 GOOGLE = "https://news.google.com/rss"
 GOOGLE_PARAMS = "hl=pt-BR&gl=BR&ceid=BR:pt-419"
 MEDIA_NS = "{http://search.yahoo.com/mrss/}"
@@ -64,14 +69,15 @@ MAX_NEWS = 150
 MAX_ARTICLE_FETCHES = 400   # matérias novas baixadas por execução
 MAX_ARTICLE_CHARS = 12000
 MAX_IMAGES = 6
-ARTICLE_VERSION = 3         # mude para rebaixar todas as matérias
+ARTICLE_VERSION = 4         # mude para rebaixar todas as matérias
 MAX_VIDEOS = 3
 VIDEO_URL = re.compile(r'itemprop="contentUrl"\s+content="(https://[^"]+\.mp4)"')
 VIDEO_THUMB = re.compile(r'itemprop="thumbnailUrl"\s+content="(https://[^"]+)"')
 VIDEO_NAME = re.compile(r'itemprop="name"\s+content="([^"]*)"')
 # Fotos que não são da matéria: miniaturas de vídeo, outros sites da Globo
 # e os cartões de "veja também" (recorte 810x456)
-NOT_ARTICLE_IMAGE = re.compile(r"video\.glbimg|s2-ge\.|s2-gshow\.|s2-globo|s2-valor|810x456/top|logo|icon|avatar|sprite", re.I)
+NOT_ARTICLE_IMAGE = re.compile(r"video\.glbimg|s2-globo|s2-valor|810x456/top|logo|icon|avatar|sprite", re.I)
+GLOBO_SITES = ("g1", "ge", "gshow")
 OUT_DIR = Path(sys.argv[1] if len(sys.argv) > 1 else "news")
 PREV_DIR = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 
@@ -80,6 +86,7 @@ def feeds_for(code):
     if code.startswith("cat:"):
         section, google = CATEGORIES[code[4:]]
         feeds = [f"https://g1.globo.com/rss/g1/{section}/"] if section else []
+        feeds += EXTRA_FEEDS.get(code[4:], [])
         if google.startswith("topic:"):
             feeds.append(f"{GOOGLE}/headlines/section/topic/{google[6:]}?{GOOGLE_PARAMS}")
         else:
@@ -125,7 +132,8 @@ def find_image(item, description):
 def parse(xml_bytes, url):
     root = ET.fromstring(xml_bytes)
     is_google = "news.google.com" in url
-    default_source = "Google Notícias" if is_google else "g1"
+    default_source = ("Google Notícias" if is_google else "ge" if "ge.globo.com" in url
+                      else "gshow" if "gshow.globo.com" in url else "g1")
     items = []
     for item in root.iter("item"):
         get = lambda tag: (item.findtext(tag) or "").strip()
@@ -182,8 +190,10 @@ def build(code):
 class ArticleParser(HTMLParser):
     """Extrai parágrafos e fotos de uma matéria do g1."""
 
-    def __init__(self):
+    def __init__(self, site="g1"):
         super().__init__(convert_charrefs=True)
+        # Fotos de outros sites da Globo são de matérias recomendadas
+        self.other_sites = [f"s2-{x}." for x in GLOBO_SITES if x != site]
         self.paragraphs, self.fallback, self.images = [], [], []
         self._p = None          # texto do <p> atual
         self._p_main = False    # <p> é do corpo da matéria (content-text)
@@ -205,7 +215,8 @@ class ArticleParser(HTMLParser):
             # Só fotos dentro do corpo da matéria (blocos de mídia/figure)
             src = a.get("src") or a.get("data-src") or ""
             in_media = any(self._media) or "content-media" in cls
-            if in_media and src.startswith("http") and "glbimg.com" in src and not NOT_ARTICLE_IMAGE.search(src):
+            if (in_media and src.startswith("http") and "glbimg.com" in src and not NOT_ARTICLE_IMAGE.search(src)
+                    and not any(o in src for o in self.other_sites)):
                 self.images.append(src)
 
     def handle_endtag(self, tag):
@@ -253,8 +264,16 @@ def find_videos(page):
     return videos[:MAX_VIDEOS]
 
 
+def globo_site(link):
+    host = urllib.parse.urlparse(link).netloc
+    for site in GLOBO_SITES:
+        if host == f"{site}.globo.com":
+            return site
+    return None
+
+
 def fetch_article(link):
-    parser = ArticleParser()
+    parser = ArticleParser(globo_site(link) or "g1")
     page = fetch(link, timeout=15).decode("utf-8", "replace")
     parser.feed(page)
     paragraphs = parser.paragraphs or [p for p in parser.fallback if len(p) > 80]
@@ -277,13 +296,104 @@ def article_id(link):
     return hashlib.sha1(link.encode()).hexdigest()[:16]
 
 
+MAX_GOOGLE_RESOLVE = 250   # notícias do Google resolvidas por execução
+META_TAG = re.compile(r"<meta\b[^>]*>", re.I)
+
+
+def meta_content(page, *names):
+    for tag in META_TAG.findall(page[:300000]):
+        key = re.search(r'(?:property|name)\s*=\s*["\']([^"\']+)', tag, re.I)
+        val = re.search(r'content\s*=\s*["\']([^"\']*)', tag, re.I)
+        if key and val and key.group(1).lower() in names and val.group(1).strip():
+            return html.unescape(val.group(1).strip())
+    return ""
+
+
+def google_real_url(link):
+    """O link do Google Notícias é codificado; pergunta ao Google o link original."""
+    page = fetch(link, timeout=15).decode("utf-8", "replace")
+    sg = re.search(r'data-n-a-sg="([^"]+)"', page)
+    ts = re.search(r'data-n-a-ts="([^"]+)"', page)
+    if not (sg and ts):
+        return ""
+    aid = link.split("/articles/")[1].split("?")[0]
+    inner = ["garturlreq", [["X", "X", ["X", "X"], None, None, 1, 1, "US:en", None, 1, None, None, None, None, None, 0, 1],
+                            "X", "X", 1, [1, 1, 1], 1, 1, None, 0, 0, None, 0], aid, int(ts.group(1)), sg.group(1)]
+    body = urllib.parse.urlencode({"f.req": json.dumps([[["Fbv4je", json.dumps(inner), None, "generic"]]])}).encode()
+    req = urllib.request.Request("https://news.google.com/_/DotsSplashUi/data/batchexecute", data=body, headers={
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=15) as res:
+        out = res.read().decode("utf-8", "replace")
+    real = re.search(r'garturlres\\",\\"(https?://[^\\"]+)', out)
+    return real.group(1) if real else ""
+
+
+def resolve_google(link):
+    url = google_real_url(link)
+    if not url:
+        return {"url": "", "image": "", "summary": ""}
+    image = summary = ""
+    try:
+        page = fetch(url, timeout=15).decode("utf-8", "replace")
+        image = meta_content(page, "og:image", "og:image:url", "twitter:image", "twitter:image:src")
+        summary = meta_content(page, "og:description", "description", "twitter:description")
+        if image.startswith("//"):
+            image = "https:" + image
+        elif image.startswith("/"):
+            image = urllib.parse.urljoin(url, image)
+    except Exception:
+        pass  # mesmo sem foto, o link original já vale
+    return {"url": url, "image": image if image.startswith("http") else "", "summary": summary[:400]}
+
+
+def attach_google(results):
+    """Notícias do Google: troca pelo link original, com foto e resumo do site."""
+    cache_file = "google.json"
+    prev = PREV_DIR / cache_file if PREV_DIR else None
+    cache = json.loads(prev.read_text(encoding="utf-8")) if prev and prev.exists() else {}
+
+    links = {n["link"] for news in results.values() for n in news if "news.google.com" in n["link"]}
+    todo = [l for l in links if l not in cache]
+
+    def get(link):
+        try:
+            return link, resolve_google(link)
+        except Exception as err:
+            print(f"FAIL google {link[:80]}: {err}")
+            return link, None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for link, info in pool.map(get, todo[:MAX_GOOGLE_RESOLVE]):
+            if info is not None:
+                cache[link] = info
+
+    cache = {l: v for l, v in cache.items() if l in links}
+    (OUT_DIR / cache_file).write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+
+    for news in results.values():
+        for n in news:
+            info = cache.get(n["link"])
+            if not info or not info["url"]:
+                continue
+            n["link"] = info["url"]
+            if info["image"]:
+                n["image"] = info["image"]
+                n["images"] = [info["image"]]
+            if info["summary"] and not n["summary"]:
+                n["summary"] = info["summary"]
+
+    ok = [v for v in cache.values() if v["url"]]
+    print(f"Google: {len(ok)} resolvidas ({sum(1 for v in ok if v['image'])} com foto), "
+          f"{min(len(todo), MAX_GOOGLE_RESOLVE)} agora, {max(0, len(todo) - MAX_GOOGLE_RESOLVE)} para a próxima")
+
+
 def attach_articles(results):
     """Baixa (ou reaproveita) o texto completo e as fotos das matérias do g1."""
     art_dir = OUT_DIR / "articles"
     art_dir.mkdir(parents=True, exist_ok=True)
     prev_dir = PREV_DIR / "articles" if PREV_DIR else None
 
-    links = {n["link"] for news in results.values() for n in news if "g1.globo.com" in n["link"]}
+    links = {n["link"] for news in results.values() for n in news if globo_site(n["link"])}
     articles, to_fetch = {}, []
     for link in links:
         aid = article_id(link)
@@ -339,6 +449,7 @@ def main():
     codes = ["BR", *REGIONS, *(f"cat:{c}" for c in CATEGORIES)]
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = dict(zip(codes, pool.map(build, codes)))
+    attach_google(results)
     attach_articles(results)
     updated = int(time.time() * 1000)
     (OUT_DIR / "cat").mkdir(exist_ok=True)

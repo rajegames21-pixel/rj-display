@@ -146,6 +146,9 @@
                     <i class="fa-solid fa-heart text-xl"></i>
                     <span id="fav-count" class="absolute top-0 right-0 w-4 h-4 bg-rose-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center hidden">0</span>
                 </button>
+                <button onclick="manualRefresh()" class="text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition p-2" title="Atualizar">
+                    <i id="refresh-icon" class="fa-solid fa-rotate-right text-xl"></i>
+                </button>
                 <button onclick="openModal('settings-modal')" class="text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition p-2" title="Configurações">
                     <i class="fa-solid fa-gear text-xl"></i>
                 </button>
@@ -232,9 +235,9 @@
 
     <!-- Aviso: notícias novas encontradas -->
     <div id="new-toast" class="hide fixed top-4 left-1/2 z-40 flex items-center gap-3 bg-blue-600 text-white pl-4 pr-2 py-2 rounded-full shadow-2xl shadow-blue-600/30">
-        <i class="fa-solid fa-bell animate-bounce"></i>
+        <i id="new-toast-icon" class="fa-solid fa-bell animate-bounce"></i>
         <span id="new-toast-text" class="text-sm font-semibold whitespace-nowrap">Notícias novas encontradas</span>
-        <button onclick="showNewNow()" class="bg-white/20 hover:bg-white/30 rounded-full px-3 py-1 text-xs font-bold transition">Ver agora</button>
+        <button id="new-toast-btn" onclick="showNewNow()" class="bg-white/20 hover:bg-white/30 rounded-full px-3 py-1 text-xs font-bold transition">Ver agora</button>
     </div>
 
     <!-- Settings Modal -->
@@ -1060,6 +1063,7 @@
                 else renderNews();
 
                 if (newOnes.length) showNewToast(newOnes.length);
+                return newOnes.length;
             } else if (newsList.length === 0) {
                 showMessage('Não foi possível carregar as notícias.', 'Verifique sua conexão. Tentaremos novamente em instantes.');
                 setTimeout(() => { if (token === loadToken) refreshNews(false); }, 30000);
@@ -1071,12 +1075,34 @@
         let toastTimer;
 
         function showNewToast(count) {
-            document.getElementById('new-toast-text').textContent =
-                count === 1 ? '1 notícia nova encontrada' : `${count} notícias novas encontradas`;
-            newToast.classList.remove('hide');
+            showToast(count === 1 ? '1 notícia nova encontrada' : `${count} notícias novas encontradas`, true);
             if (navigator.vibrate) navigator.vibrate(60);
+        }
+
+        function showToast(message, withButton) {
+            document.getElementById('new-toast-text').textContent = message;
+            document.getElementById('new-toast-btn').classList.toggle('hidden', !withButton);
+            document.getElementById('new-toast-icon').className = `fa-solid ${withButton ? 'fa-bell animate-bounce' : 'fa-circle-check'}`;
+            newToast.classList.remove('hide');
             clearTimeout(toastTimer);
             toastTimer = setTimeout(() => newToast.classList.add('hide'), 7000);
+        }
+
+        // --- Botão atualizar: busca notícias e clima na hora ---
+        let refreshing = false;
+        async function manualRefresh() {
+            if (refreshing) return;
+            refreshing = true;
+            const icon = document.getElementById('refresh-icon');
+            icon.classList.add('fa-spin');
+            try {
+                fetchWeather();
+                const count = await refreshNews(false);
+                if (!count) showToast('Tudo atualizado — nenhuma notícia nova', false);
+            } finally {
+                icon.classList.remove('fa-spin');
+                refreshing = false;
+            }
         }
 
         function showNewNow() {
@@ -1222,30 +1248,65 @@
         }
 
         // --- Bateria ---
-        // Usa a Battery API. O Safari (iPhone/iPad) não informa a bateria para
-        // sites, então lá o indicador fica escondido.
-        async function initBattery() {
-            if (!navigator.getBattery) return;
-            try {
-                const battery = await navigator.getBattery();
-                const box = document.getElementById('battery');
-                const icon = document.getElementById('battery-icon');
-                const text = document.getElementById('battery-text');
-                const update = () => {
-                    const pct = Math.round(battery.level * 100);
-                    const level = pct >= 90 ? 'full' : pct >= 60 ? 'three-quarters' : pct >= 35 ? 'half' : pct >= 15 ? 'quarter' : 'empty';
-                    const color = battery.charging ? 'text-emerald-500' : pct < 20 ? 'text-rose-500' : 'text-zinc-500 dark:text-zinc-400';
-                    icon.className = `fa-solid ${battery.charging ? 'fa-bolt' : 'fa-battery-' + level} ${color} text-sm`;
-                    text.textContent = battery.charging ? `Carregando (${pct}%)` : `${pct}%`;
-                };
-                update();
-                battery.addEventListener('levelchange', update);
-                battery.addEventListener('chargingchange', update);
-                box.classList.remove('hidden');
-                box.classList.add('flex');
-            } catch (e) {
-                // Sem acesso à bateria: mantém escondido
+        // Android/Chrome: Battery API, ao vivo.
+        // iPhone: o Safari não informa a bateria para sites. O Atalho do iPhone
+        // (automação "Carregador conectado") abre o site com
+        // ?bateria=73&carregando=1 e mostramos esse valor com o horário.
+        const BATTERY_SNAPSHOT_MAX_AGE = 6 * 60 * 60 * 1000;
+
+        function showBattery(pct, charging, suffix) {
+            const box = document.getElementById('battery');
+            const level = pct >= 90 ? 'full' : pct >= 60 ? 'three-quarters' : pct >= 35 ? 'half' : pct >= 15 ? 'quarter' : 'empty';
+            const color = charging ? 'text-emerald-500' : pct < 20 ? 'text-rose-500' : 'text-zinc-500 dark:text-zinc-400';
+            document.getElementById('battery-icon').className = `fa-solid ${charging ? 'fa-bolt' : 'fa-battery-' + level} ${color} text-sm`;
+            document.getElementById('battery-text').textContent =
+                (charging ? `Carregando (${pct}%)` : `${pct}%`) + (suffix || '');
+            box.classList.remove('hidden');
+            box.classList.add('flex');
+        }
+
+        function readBatteryFromUrl() {
+            const params = new URLSearchParams(location.search);
+            if (!params.has('bateria')) return;
+            let value = parseFloat(String(params.get('bateria')).replace(',', '.'));
+            if (!isNaN(value)) {
+                if (value <= 1) value *= 100; // aceita 0.73 ou 73
+                const charging = ['1', 'true', 'sim', 'yes'].includes((params.get('carregando') || '').toLowerCase());
+                storageSet('rjc_battery', { pct: Math.round(Math.min(100, Math.max(0, value))), charging, at: Date.now() });
             }
+            // Limpa a URL para não reaplicar um valor velho ao recarregar
+            params.delete('bateria');
+            params.delete('carregando');
+            const query = params.toString();
+            history.replaceState(null, '', location.pathname + (query ? `?${query}` : '') + location.hash);
+        }
+
+        function showBatterySnapshot() {
+            const snap = storageGet('rjc_battery', null);
+            if (!snap || Date.now() - snap.at > BATTERY_SNAPSHOT_MAX_AGE) {
+                document.getElementById('battery').classList.add('hidden');
+                return;
+            }
+            const at = new Date(snap.at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+            showBattery(snap.pct, snap.charging, ` · ${at}`);
+        }
+
+        async function initBattery() {
+            if (navigator.getBattery) {
+                try {
+                    const battery = await navigator.getBattery();
+                    const update = () => showBattery(Math.round(battery.level * 100), battery.charging);
+                    update();
+                    battery.addEventListener('levelchange', update);
+                    battery.addEventListener('chargingchange', update);
+                    return;
+                } catch (e) {
+                    // Sem acesso: tenta o valor do Atalho
+                }
+            }
+            readBatteryFromUrl();
+            showBatterySnapshot();
+            setInterval(showBatterySnapshot, 60000);
         }
 
         // --- Fullscreen ---
