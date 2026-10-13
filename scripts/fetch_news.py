@@ -66,7 +66,8 @@ EXTRA_FEEDS = {
 GOOGLE = "https://news.google.com/rss"
 GOOGLE_PARAMS = "hl=pt-BR&gl=BR&ceid=BR:pt-419"
 MEDIA_NS = "{http://search.yahoo.com/mrss/}"
-MAX_NEWS = 150
+MAX_NEWS = 150             # notícias publicadas por lista (todas com foto ou vídeo)
+MAX_CANDIDATES = 250       # candidatas por lista antes de filtrar as sem foto
 MAX_ARTICLE_FETCHES = 400   # matérias novas baixadas por execução
 MAX_ARTICLE_CHARS = 12000
 MAX_IMAGES = 6
@@ -189,7 +190,7 @@ def build(code):
                 seen.add(key)
                 news.append(n)
     news.sort(key=lambda n: n["date"], reverse=True)
-    return news[:MAX_NEWS]
+    return news[:MAX_CANDIDATES]
 
 
 class ArticleParser(HTMLParser):
@@ -495,6 +496,9 @@ def main():
         results = dict(zip(codes, pool.map(build, codes)))
     attach_google(results)
     attach_articles(results)
+    # Só publica notícias com foto ou vídeo (capa), para o app não ficar feio
+    for code, news in results.items():
+        results[code] = [n for n in news if n.get("image") or n.get("videos")][:MAX_NEWS]
     updated = int(time.time() * 1000)
     (OUT_DIR / "cat").mkdir(exist_ok=True)
     for code, news in results.items():
