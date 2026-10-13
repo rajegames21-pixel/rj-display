@@ -231,7 +231,11 @@ def image_key(url):
 
 
 def find_videos(page):
-    """Vídeos da matéria: o g1 publica o MP4 (360p) em metadados VideoObject."""
+    """Vídeos da matéria (metadados VideoObject do g1).
+
+    O MP4 é protegido (só toca no player da Globo), então guardamos a capa
+    e o título: o site mostra a capa com selo de vídeo e o toque abre o g1.
+    """
     videos, seen = [], set()
     for m in VIDEO_URL.finditer(page):
         src = html.unescape(m.group(1))
@@ -244,7 +248,8 @@ def find_videos(page):
         thumbs = VIDEO_THUMB.findall(before)
         names = VIDEO_NAME.findall(before)
         poster = thumbs[-1].replace("/x240/", "/x720/") if thumbs else ""
-        videos.append({"src": src, "poster": poster, "title": html.unescape(names[-1]) if names else ""})
+        if poster:
+            videos.append({"poster": poster, "title": html.unescape(names[-1]) if names else ""})
     return videos[:MAX_VIDEOS]
 
 
