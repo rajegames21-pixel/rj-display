@@ -112,7 +112,9 @@ def feeds_for(code):
     if code.startswith("city:"):
         city = CITIES[code[5:]]
         query = city.get("busca") or f'"{city["nome"]}"'
-        return [f"{GOOGLE}/search?q={urllib.parse.quote(f'({query}) when:7d')}&{GOOGLE_PARAMS}"]
+        # "feeds": sites locais da cidade/região (RSS), além do Google Notícias
+        return [f"{GOOGLE}/search?q={urllib.parse.quote(f'({query}) when:7d')}&{GOOGLE_PARAMS}",
+                *city.get("feeds", [])]
     if code.startswith("cat:"):
         section, google = CATEGORIES[code[4:]]
         feeds = [f"https://g1.globo.com/rss/g1/{section}/"] if section else []
@@ -147,23 +149,33 @@ def html_to_text(raw):
     return re.sub(r"\s+", " ", html.unescape(text)).strip()
 
 
+def bigger_image(url):
+    """Blogger manda miniatura de 72px no feed (/s72-c/ ou =s72-c): pede 1200px."""
+    if "blogger.googleusercontent.com" in url or "bp.blogspot.com" in url:
+        url = re.sub(r"/s\d+(-c)?/", "/s1200/", url)
+        url = re.sub(r"=s\d+(-c)?$", "=s1200", url)
+    return url
+
+
 def find_image(item, description):
     for tag in ("content", "thumbnail"):
         el = item.find(MEDIA_NS + tag)
         if el is not None and el.get("url"):
-            return el.get("url")
+            return bigger_image(el.get("url"))
     enc = item.find("enclosure")
     if enc is not None and (enc.get("type") or "").startswith("image/") and enc.get("url"):
         return enc.get("url")
     m = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', description or "", re.I)
-    return html.unescape(m.group(1)) if m else ""
+    return bigger_image(html.unescape(m.group(1))) if m else ""
 
 
 def parse(xml_bytes, url):
     root = ET.fromstring(xml_bytes)
     is_google = "news.google.com" in url
+    channel_title = (root.findtext("channel/title") or "").strip()
     default_source = ("Google Notícias" if is_google else "ge" if "ge.globo.com" in url
-                      else "gshow" if "gshow.globo.com" in url else "g1")
+                      else "gshow" if "gshow.globo.com" in url else "g1" if "g1.globo.com" in url
+                      else channel_title or urllib.parse.urlparse(url).netloc.removeprefix("www."))
     items = []
     for item in root.iter("item"):
         get = lambda tag: (item.findtext(tag) or "").strip()
@@ -616,11 +628,32 @@ def build_videos():
     return playable[:MAX_NEWS]
 
 
+def share_regional_news(results):
+    """Um site regional (ex.: listado em Itupeva) também alimenta as outras
+    cidades da lista quando a notícia cita o nome delas."""
+    regional = {urllib.parse.urlparse(f).netloc.removeprefix("www.")
+                for c in CITIES.values() for f in c.get("feeds", [])}
+    if not regional:
+        return
+    pool = [n for code, news in results.items() if code.startswith("city:") for n in news
+            if urllib.parse.urlparse(n["link"]).netloc.removeprefix("www.") in regional]
+    for slug, city in CITIES.items():
+        news = results.get(f"city:{slug}", [])
+        have = {norm(n["title"]) for n in news}
+        name = norm(city["nome"])
+        for n in pool:
+            if norm(n["title"]) not in have and name in norm(f"{n['title']} {n['summary']}"):
+                news.append(n)
+                have.add(norm(n["title"]))
+        news.sort(key=lambda n: n["date"], reverse=True)
+
+
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     codes = ["BR", *REGIONS, *(f"cat:{c}" for c in CATEGORIES), *(f"city:{c}" for c in CITIES)]
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = dict(zip(codes, pool.map(build, codes)))
+    share_regional_news(results)
     attach_google(results)
     attach_articles(results)
     results["cat:videos"] = build_videos()

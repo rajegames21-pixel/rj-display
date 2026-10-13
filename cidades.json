@@ -1,5 +1,5 @@
 [
-  {"nome": "Itupeva", "uf": "SP"},
+  {"nome": "Itupeva", "uf": "SP", "feeds": ["https://www.ianoticias.jor.br/feeds/posts/default?alt=rss&max-results=50"]},
   {"nome": "Jundiaí", "uf": "SP"},
   {"nome": "Campinas", "uf": "SP"},
   {"nome": "Sorocaba", "uf": "SP"},
