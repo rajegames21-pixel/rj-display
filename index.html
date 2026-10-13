@@ -82,9 +82,14 @@
 
         /* Imagens da notícia: troca com transição suave */
         .news-img { transition: opacity 0.8s ease; }
-        #news-media { transition: width 0.4s ease; }
-        /* Modo leitura: a imagem some e o texto ocupa o cartão todo */
-        #news-container.reading #news-media { width: 0; }
+        #news-media { transition: width 0.5s ease, opacity 0.5s ease, transform 0.5s ease; }
+        /* Modo leitura: a imagem some e o texto ocupa o cartão todo;
+           ao soltar o dedo ela volta deslizando */
+        #news-container.reading #news-media { width: 0; opacity: 0; transform: translateX(40px); }
+
+        /* Aviso de notícias novas */
+        #new-toast { transform: translate(-50%, 0); transition: opacity 0.35s ease, transform 0.35s ease; }
+        #new-toast.hide { opacity: 0; transform: translate(-50%, -20px); pointer-events: none; }
 
         /* Barra de rolagem do texto sempre visível */
         #news-body { scrollbar-width: thin; scrollbar-color: rgba(59, 130, 246, 0.6) transparent; }
@@ -190,7 +195,7 @@
                         <span id="news-source" class="truncate"><i class="fa-regular fa-newspaper mr-1 text-blue-500"></i> RJC News</span>
                         <span class="flex items-center gap-3 shrink-0">
                             <span id="news-time"></span>
-                            <span class="text-blue-600 dark:text-blue-400 font-semibold">Toque para abrir <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></span>
+                            <span id="open-label" class="text-blue-600 dark:text-blue-400 font-semibold">Toque para abrir <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></span>
                         </span>
                     </div>
                 </div>
@@ -202,6 +207,13 @@
                     <div id="news-image-placeholder" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-blue-500/20 to-purple-500/20">
                         <i class="fa-regular fa-newspaper text-6xl text-blue-500/50"></i>
                     </div>
+                    <!-- Matéria com vídeo: capa primeiro + selo; o toque abre o vídeo no g1 -->
+                    <div id="video-badge" class="hidden absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div class="w-16 h-16 rounded-full bg-black/55 backdrop-blur-sm flex items-center justify-center text-white text-2xl shadow-2xl">
+                            <i class="fa-solid fa-play ml-1"></i>
+                        </div>
+                        <span class="absolute top-3 left-3 bg-black/60 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full"><i class="fa-solid fa-video mr-1"></i>Vídeo</span>
+                    </div>
                     <div id="image-dots" class="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5"></div>
                 </div>
 
@@ -211,6 +223,13 @@
                 </div>
             </div>
         </main>
+    </div>
+
+    <!-- Aviso: notícias novas encontradas -->
+    <div id="new-toast" class="hide fixed top-4 left-1/2 z-40 flex items-center gap-3 bg-blue-600 text-white pl-4 pr-2 py-2 rounded-full shadow-2xl shadow-blue-600/30">
+        <i class="fa-solid fa-bell animate-bounce"></i>
+        <span id="new-toast-text" class="text-sm font-semibold whitespace-nowrap">Notícias novas encontradas</span>
+        <button onclick="showNewNow()" class="bg-white/20 hover:bg-white/30 rounded-full px-3 py-1 text-xs font-bold transition">Ver agora</button>
     </div>
 
     <!-- Settings Modal -->
@@ -225,11 +244,18 @@
 
             <div class="space-y-5">
                 <div>
-                    <label for="region-select" class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Notícias de qual estado?</label>
+                    <label for="region-select" class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Estado</label>
                     <select id="region-select" onchange="setRegion(this.value)" class="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <!-- Preenchido via JS -->
                     </select>
                     <p class="text-xs text-zinc-500 mt-2">Hora e clima seguem a capital do estado escolhido. Em "Brasil (todas)", usam a sua localização (ou Brasília).</p>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Categorias <span class="normal-case font-normal tracking-normal">(escolha quantas quiser)</span></label>
+                    <div class="grid grid-cols-3 gap-2" id="category-buttons">
+                        <!-- Preenchido via JS -->
+                    </div>
                 </div>
 
                 <div>
@@ -308,6 +334,32 @@
             SE: { name: 'Sergipe', slug: 'sergipe', city: 'Aracaju', lat: -10.91, lon: -37.07, tz: 'America/Maceio' },
             TO: { name: 'Tocantins', slug: 'tocantins', city: 'Palmas', lat: -10.18, lon: -48.33, tz: 'America/Araguaina' }
         };
+
+        // --- Categorias (geradas pelo robô em news/cat/<slug>.json) ---
+        // "destaques" = principais notícias do estado escolhido (ou do Brasil)
+        const CATEGORIES = {
+            destaques: { label: 'Destaques', icon: 'fa-star' },
+            politica: { label: 'Política', icon: 'fa-landmark' },
+            economia: { label: 'Economia', icon: 'fa-chart-line' },
+            mundo: { label: 'Mundo', icon: 'fa-earth-americas' },
+            tecnologia: { label: 'Tecnologia', icon: 'fa-microchip' },
+            ciencia: { label: 'Ciência', icon: 'fa-flask' },
+            saude: { label: 'Saúde', icon: 'fa-heart-pulse' },
+            esportes: { label: 'Esportes', icon: 'fa-futbol' },
+            cinema: { label: 'Cinema e Séries', icon: 'fa-film' },
+            musica: { label: 'Música', icon: 'fa-music' },
+            famosos: { label: 'Famosos', icon: 'fa-star-half-stroke' },
+            games: { label: 'Games', icon: 'fa-gamepad' },
+            educacao: { label: 'Educação', icon: 'fa-graduation-cap' },
+            'meio-ambiente': { label: 'Meio Ambiente', icon: 'fa-leaf' },
+            carros: { label: 'Carros', icon: 'fa-car' },
+            agro: { label: 'Agro', icon: 'fa-wheat-awn' },
+            turismo: { label: 'Turismo', icon: 'fa-plane' },
+            concursos: { label: 'Concursos', icon: 'fa-briefcase' },
+            policia: { label: 'Polícia', icon: 'fa-shield-halved' }
+        };
+        let selectedCats = storageGet('rjc_cats', ['destaques']).filter(c => CATEGORIES[c]);
+        if (selectedCats.length === 0) selectedCats = ['destaques'];
 
         let currentRegion = storageGet('rjc_region', 'BR');
         if (!REGIONS[currentRegion]) currentRegion = 'BR';
@@ -597,6 +649,65 @@
             return all.slice(0, MAX_NEWS);
         }
 
+        async function loadCategory(slug) {
+            const text = await fetchWithTimeout(`${NEWS_DATA_URL}cat/${slug}.json?v=${Math.floor(Date.now() / 300000)}`, 10000);
+            const data = JSON.parse(text);
+            return Array.isArray(data.items) ? data.items : [];
+        }
+
+        // Junta as categorias escolhidas, alternando entre elas para variar
+        async function loadSelectedNews(code) {
+            const regionLabel = code === 'BR' ? 'Brasil' : REGIONS[code].name;
+            const lists = await Promise.all(selectedCats.map(async slug => {
+                try {
+                    const items = slug === 'destaques' ? await loadNews(code) : await loadCategory(slug);
+                    const tag = slug === 'destaques' ? regionLabel : CATEGORIES[slug].label;
+                    return items.map(n => Object.assign({}, n, { tag }));
+                } catch (err) {
+                    console.warn(`Categoria ${slug} indisponível:`, err);
+                    return [];
+                }
+            }));
+            const seenTitles = new Set();
+            const merged = [];
+            const longest = Math.max(0, ...lists.map(l => l.length));
+            for (let i = 0; i < longest; i++) {
+                lists.forEach(list => {
+                    const n = list[i];
+                    if (!n) return;
+                    const key = normalizeTitle(n.title);
+                    if (seenTitles.has(key)) return;
+                    seenTitles.add(key);
+                    merged.push(n);
+                });
+            }
+            return merged;
+        }
+
+        // --- Notícias já vistas: as não vistas aparecem primeiro ---
+        const MAX_SEEN = 3000;
+        let seenList = storageGet('rjc_seen', []);
+        const seenSet = new Set(seenList);
+
+        function markSeen(item) {
+            const key = normalizeTitle(item.title);
+            if (seenSet.has(key)) return;
+            seenSet.add(key);
+            seenList.push(key);
+            if (seenList.length > MAX_SEEN) {
+                seenList.splice(0, seenList.length - MAX_SEEN).forEach(k => seenSet.delete(k));
+            }
+            storageSet('rjc_seen', seenList);
+        }
+
+        function isSeen(item) {
+            return seenSet.has(normalizeTitle(item.title));
+        }
+
+        function prioritizeUnseen(items) {
+            return [...items.filter(n => !isSeen(n)), ...items.filter(isSeen)];
+        }
+
         function timeAgo(ts) {
             if (!ts) return '';
             const diff = Math.max(0, Date.now() - ts);
@@ -667,6 +778,7 @@
                 newsImagePlaceholder.classList.add('hidden');
                 slideIndex = i;
                 renderDots();
+                videoBadge.classList.toggle('hidden', !videoPosters.has(slideImages[i]));
             };
             next.onerror = () => {
                 if (token !== slideToken) return;
@@ -684,8 +796,14 @@
                 : '';
         }
 
+        const videoBadge = document.getElementById('video-badge');
+        let videoPosters = new Set();
+
         function showImages(images) {
             slideToken++;
+            videoBadge.classList.add('hidden');
+            const item = newsList[currentIndex];
+            videoPosters = new Set(((item && item.videos) || []).map(v => v.poster));
             clearInterval(slideTimer);
             slideImages = images.slice();
             slideIndex = 0;
@@ -747,6 +865,8 @@
             newsBody.classList.add('fade-enter-active');
 
             const item = newsList[currentIndex];
+            newsTag.textContent = item.tag || newsTag.textContent;
+            markSeen(item);
             newsTitle.textContent = item.title;
             newsSummary.textContent = item.summary;
             newsSource.innerHTML = `<i class="fa-regular fa-newspaper mr-1 text-blue-500"></i> ${escapeHtml(item.source)}`;
@@ -756,7 +876,13 @@
             // Notícia nova: sai do modo leitura e volta o texto para o topo
             newsContainer.classList.remove('reading');
             newsBody.scrollTop = 0;
-            showImages(item.images && item.images.length ? item.images : (item.image ? [item.image] : []));
+            // Com vídeo, a capa dele vem primeiro (o vídeo só toca no g1)
+            const posters = (item.videos || []).map(v => v.poster).filter(Boolean);
+            const photos = item.images && item.images.length ? item.images : (item.image ? [item.image] : []);
+            showImages([...posters, ...photos]);
+            document.getElementById('open-label').innerHTML = posters.length
+                ? 'Toque para assistir <i class="fa-solid fa-play ml-1"></i>'
+                : 'Toque para abrir <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i>';
             renderArticle(item);
             updateMoreHint();
 
@@ -830,10 +956,17 @@
             pauseRotation();
         }
 
+        function exitReading() {
+            if (!newsContainer.classList.contains('reading')) return;
+            newsContainer.classList.remove('reading');
+            setTimeout(updateMoreHint, 550); // depois da animação
+        }
+
         function onHoldEnd() {
             if (!isHolding) return;
             isHolding = false;
             if (Date.now() - holdStart > LONG_PRESS_MS) suppressClick = true;
+            exitReading();
             resumeRotation();
         }
 
@@ -852,8 +985,11 @@
         }, { passive: true });
 
         // Computador: rodinha do mouse também entra no modo leitura
+        let wheelExitTimer;
         newsBody.addEventListener('wheel', () => {
             enterReading();
+            clearTimeout(wheelExitTimer);
+            wheelExitTimer = setTimeout(() => { if (!isHolding) exitReading(); }, 4000);
             if (!isHolding) {
                 resetTimer();
                 restartProgress();
@@ -861,16 +997,20 @@
         }, { passive: true });
         window.addEventListener('resize', updateMoreHint);
 
+        function newsCacheKey() {
+            return `${currentRegion}|${selectedCats.join(',')}`;
+        }
+
         async function refreshNews(showLoading) {
             const token = ++loadToken;
             const code = currentRegion;
-            const cacheKey = `rjc_news_${code}`;
+            const cacheKey = newsCacheKey();
 
             // Mostra o que estiver em cache enquanto busca as novas
             if (showLoading) {
-                const cached = storageGet(cacheKey, []);
-                if (cached.length) {
-                    newsList = cached;
+                const cache = storageGet('rjc_news_cache', null);
+                if (cache && cache.key === cacheKey && cache.items.length) {
+                    newsList = prioritizeUnseen(cache.items);
                     currentIndex = 0;
                     renderNews();
                     resetTimer();
@@ -882,30 +1022,87 @@
 
             let fresh = [];
             try {
-                fresh = await loadNews(code);
+                fresh = await loadSelectedNews(code);
             } catch (err) {
                 console.error('Erro ao buscar notícias:', err);
             }
-            if (token !== loadToken) return; // usuário trocou de estado no meio
+            if (token !== loadToken) return; // usuário trocou de estado/categoria no meio
 
             if (fresh.length) {
-                const currentId = newsList[currentIndex] && newsList[currentIndex].id;
-                newsList = fresh;
-                const keep = newsList.findIndex(n => n.id === currentId);
-                currentIndex = keep > -1 ? keep : 0;
-                storageSet(cacheKey, fresh);
-                // Não interrompe quem está lendo a mesma notícia
-                const reading = isHolding || newsContainer.classList.contains('reading');
-                if (!(reading && keep > -1)) {
+                storageSet('rjc_news_cache', { key: cacheKey, items: fresh });
+                const ordered = prioritizeUnseen(fresh);
+
+                if (newsList.length === 0) {
+                    newsList = ordered;
+                    currentIndex = 0;
                     renderNews();
-                    if (!isHolding) resetTimer();
-                } else {
-                    newsCounter.textContent = `${currentIndex + 1}/${newsList.length}`;
+                    resetTimer();
+                    return;
                 }
+
+                // Notícias que chegaram agora entram logo depois da atual
+                const current = newsList[currentIndex];
+                const oldKeys = new Set(newsList.map(n => normalizeTitle(n.title)));
+                const isCurrent = n => current && normalizeTitle(n.title) === normalizeTitle(current.title);
+                const newOnes = ordered.filter(n => !oldKeys.has(normalizeTitle(n.title)) && !isSeen(n));
+                const newKeys = new Set(newOnes.map(n => normalizeTitle(n.title)));
+                const rest = ordered.filter(n => !isCurrent(n) && !newKeys.has(normalizeTitle(n.title)));
+
+                newsList = current ? [current, ...newOnes, ...rest] : [...newOnes, ...rest];
+                currentIndex = 0;
+                // A notícia na tela continua a mesma: só atualiza o contador
+                if (current) newsCounter.textContent = `1/${newsList.length}`;
+                else renderNews();
+
+                if (newOnes.length) showNewToast(newOnes.length);
             } else if (newsList.length === 0) {
                 showMessage('Não foi possível carregar as notícias.', 'Verifique sua conexão. Tentaremos novamente em instantes.');
                 setTimeout(() => { if (token === loadToken) refreshNews(false); }, 30000);
             }
+        }
+
+        // --- Aviso de notícias novas ---
+        const newToast = document.getElementById('new-toast');
+        let toastTimer;
+
+        function showNewToast(count) {
+            document.getElementById('new-toast-text').textContent =
+                count === 1 ? '1 notícia nova encontrada' : `${count} notícias novas encontradas`;
+            newToast.classList.remove('hide');
+            if (navigator.vibrate) navigator.vibrate(60);
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => newToast.classList.add('hide'), 7000);
+        }
+
+        function showNewNow() {
+            newToast.classList.add('hide');
+            nextNews();
+        }
+
+        function renderCategoryButtons() {
+            document.getElementById('category-buttons').innerHTML = Object.entries(CATEGORIES).map(([slug, c]) => {
+                const active = selectedCats.includes(slug);
+                const label = slug === 'destaques' ? `${c.label} (${currentRegion === 'BR' ? 'Brasil' : currentRegion})` : c.label;
+                return `<button onclick="toggleCategory('${slug}')" class="rounded-xl px-2 py-2.5 text-xs transition truncate ${active
+                    ? 'bg-blue-600 text-white font-semibold shadow-lg shadow-blue-500/20'
+                    : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-medium hover:bg-zinc-200 dark:hover:bg-zinc-700'}">
+                    <i class="fa-solid ${c.icon} mr-1"></i>${escapeHtml(label)}</button>`;
+            }).join('');
+        }
+
+        let categoryRefreshTimer;
+        function toggleCategory(slug) {
+            if (selectedCats.includes(slug)) {
+                if (selectedCats.length === 1) return; // pelo menos uma
+                selectedCats = selectedCats.filter(c => c !== slug);
+            } else {
+                selectedCats = [...selectedCats, slug];
+            }
+            storageSet('rjc_cats', selectedCats);
+            renderCategoryButtons();
+            // Espera o usuário terminar de escolher antes de recarregar
+            clearTimeout(categoryRefreshTimer);
+            categoryRefreshTimer = setTimeout(() => refreshNews(true), 700);
         }
 
         function populateRegions() {
@@ -967,7 +1164,10 @@
             modal.classList.remove('hidden');
 
             if (id === 'favorites-modal') renderFavorites();
-            if (id === 'settings-modal') document.getElementById('region-select').value = currentRegion;
+            if (id === 'settings-modal') {
+                document.getElementById('region-select').value = currentRegion;
+                renderCategoryButtons();
+            }
 
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
@@ -1051,9 +1251,12 @@
         function onFirstTap(e) {
             tapListenerArmed = false;
             if (landscapeQuery.matches && !isFullscreen()) {
-                // Este toque serve só para entrar em tela cheia (não abre a notícia)
-                e.stopPropagation();
-                e.preventDefault();
+                // Toque no cartão serve só para entrar em tela cheia (não abre
+                // a notícia); toque em botões funciona normalmente
+                if (!e.target.closest('button, select')) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                }
                 enterFullscreen();
             }
         }
@@ -1095,6 +1298,7 @@
         // Init
         applyTheme();
         populateRegions();
+        renderCategoryButtons();
         updateFavBadge();
         fetchWeather();
         requestUserLocation();
