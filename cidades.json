@@ -1,0 +1,8 @@
+[
+  {"nome": "Itupeva", "uf": "SP"},
+  {"nome": "Jundiaí", "uf": "SP"},
+  {"nome": "Campinas", "uf": "SP"},
+  {"nome": "Sorocaba", "uf": "SP"},
+  {"nome": "São Paulo", "uf": "SP", "busca": "\"cidade de São Paulo\" OR \"capital paulista\" OR \"Prefeitura de São Paulo\""},
+  {"nome": "Rio de Janeiro", "uf": "RJ", "busca": "\"cidade do Rio\" OR \"Prefeitura do Rio\" OR \"Zona Norte do Rio\" OR \"Zona Sul do Rio\""}
+]
