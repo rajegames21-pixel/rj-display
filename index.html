@@ -343,7 +343,7 @@
     <script>
         // Versão do app. Ao publicar uma mudança, atualize aqui E em version.json:
         // quem estiver com o RJC aberto recarrega sozinho para a versão nova.
-        const APP_VERSION = '2026.10.13-4';
+        const APP_VERSION = '2026.10.13-5';
 
         // --- Helpers ---
         function storageGet(key, fallback) {
@@ -966,9 +966,9 @@
 
         // --- Vídeos do YouTube: tocam dentro do RJC (player oficial) ---
         // Começa sem som (regra dos navegadores para tocar sozinho). A próxima
-        // notícia entra quando o vídeo termina, ou após YT_MAX_MS em vídeos
-        // longos/ao vivo. Se o vídeo falhar, mostra a capa no ritmo normal.
-        const YT_MAX_MS = 5 * 60 * 1000;
+        // notícia entra após YT_MAX_MS (ou antes, se o vídeo for mais curto).
+        // Se o vídeo falhar, mostra a capa no ritmo normal.
+        const YT_MAX_MS = 15 * 1000; // cada vídeo toca só os primeiros 15 s
         const YT_START_TIMEOUT_MS = 12000;
         const ytWrap = document.getElementById('yt-wrap');
         let ytActive = false;
@@ -1055,7 +1055,7 @@
                 const limit = duration ? Math.min(duration * 1000, YT_MAX_MS) : YT_MAX_MS;
                 const played = duration ? ytPlayer.getCurrentTime() * 1000 : (ytStartedAt ? Date.now() - ytStartedAt : 0);
                 newsProgress.style.width = `${Math.min(100, (played / limit) * 100)}%`;
-                if (played >= limit && limit === YT_MAX_MS) finishYouTube(ytItem, true);
+                if (played >= limit) finishYouTube(ytItem, true);
             }, 500);
         }
 
