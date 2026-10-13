@@ -67,6 +67,11 @@ EXTRA_FEEDS = {
 GOOGLE = "https://news.google.com/rss"
 GOOGLE_PARAMS = "hl=pt-BR&gl=BR&ceid=BR:pt-419"
 MEDIA_NS = "{http://search.yahoo.com/mrss/}"
+CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}"
+# Sites locais extras por estado (RSS), além do g1 e do Google Notícias
+STATE_EXTRA_FEEDS = {
+    "PI": ["api:piauinoticias"],
+}
 MAX_NEWS = 150             # notícias publicadas por lista (todas com foto ou vídeo)
 MAX_CANDIDATES = 250       # candidatas por lista antes de filtrar as sem foto
 MAX_ARTICLE_FETCHES = 400   # matérias novas baixadas por execução
@@ -135,6 +140,7 @@ def feeds_for(code):
     return [
         f"https://g1.globo.com/rss/g1/{code.lower()}/{slug}/",
         f"{GOOGLE}/search?q={query}&{GOOGLE_PARAMS}",
+        *STATE_EXTRA_FEEDS.get(code, []),
     ]
 
 
@@ -158,6 +164,8 @@ def bigger_image(url):
 
 
 def find_image(item, description):
+    content = item.findtext(CONTENT_NS + "encoded") or ""
+    description = f"{description or ''} {content}"
     for tag in ("content", "thumbnail"):
         el = item.find(MEDIA_NS + tag)
         if el is not None and el.get("url"):
@@ -211,7 +219,41 @@ def norm(title):
     return re.sub(r"[^a-z0-9 ]", "", t)[:60]
 
 
+def piauinoticias():
+    """Portal Piauí Notícias: o site não tem RSS; usa a mesma API pública que
+    a página inicial dele usa (/api/home-news)."""
+    data = json.loads(fetch("https://piauinoticias.com/api/home-news"))
+    posts = list(data.get("featured") or [])
+    for group in (data.get("news") or {}).values():
+        posts.extend(group or [])
+    items, seen = [], set()
+    for p in posts:
+        if not p.get("slug") or not p.get("title") or p["slug"] in seen:
+            continue
+        seen.add(p["slug"])
+        try:
+            date = int(datetime.fromisoformat(p["published_at"].replace("Z", "+00:00")).timestamp() * 1000)
+        except Exception:
+            date = 0
+        link = f"https://piauinoticias.com/{p.get('category_slug') or 'noticia'}/{p['slug']}"
+        items.append({"id": link, "link": link, "title": html.unescape(p["title"]).strip(),
+                      "summary": html_to_text(p.get("excerpt") or ""), "source": "Piauí Notícias",
+                      "site": "piauinoticias.com", "image": p.get("image_url") or "", "date": date})
+    return items
+
+
+CUSTOM_SOURCES = {"api:piauinoticias": piauinoticias}
+
+
 def load_feed(url):
+    if url in CUSTOM_SOURCES:
+        try:
+            items = CUSTOM_SOURCES[url]()
+            print(f"ok   {len(items):3d}  {url}")
+            return items
+        except Exception as err:
+            print(f"FAIL      {url}: {err}")
+            return []
     try:
         items = parse(fetch(url), url)
         print(f"ok   {len(items):3d}  {url}")
@@ -474,6 +516,40 @@ def attach_google(results):
           + (" (parou: Google bloqueando)" if blocked["count"] >= GOOGLE_MAX_BLOCKS else ""))
 
 
+MAX_OG_FETCHES = 200
+
+
+def attach_site_images(results):
+    """Sites locais cujo feed não traz foto: pega a og:image da página."""
+    cache_file = "og.json"
+    prev = PREV_DIR / cache_file if PREV_DIR else None
+    cache = json.loads(prev.read_text(encoding="utf-8")) if prev and prev.exists() else {}
+    skip = ("news.google.com", "globo.com", "youtube.com")
+    items = [n for news in results.values() for n in news
+             if not n.get("image") and not any(s in n["link"] for s in skip)]
+    todo = list(dict.fromkeys(n["link"] for n in items if n["link"] not in cache))[:MAX_OG_FETCHES]
+
+    def get(link):
+        try:
+            page = fetch(link, timeout=15).decode("utf-8", "replace")
+            img = meta_content(page, "og:image", "og:image:url", "twitter:image", "twitter:image:src")
+            return link, urllib.parse.urljoin(link, img) if img else ""
+        except Exception:
+            return link, None
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for link, img in pool.map(get, todo):
+            if img is not None:
+                cache[link] = img
+    links = {n["link"] for n in items}
+    cache = {l: v for l, v in cache.items() if l in links}
+    (OUT_DIR / cache_file).write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+    for n in items:
+        if cache.get(n["link"]):
+            n["image"] = cache[n["link"]]
+    print(f"Sites locais: {sum(1 for v in cache.values() if v)} fotos pela página, {len(todo)} buscadas agora")
+
+
 def attach_articles(results):
     """Baixa (ou reaproveita) o texto completo e as fotos das matérias do g1."""
     art_dir = OUT_DIR / "articles"
@@ -655,6 +731,7 @@ def main():
         results = dict(zip(codes, pool.map(build, codes)))
     share_regional_news(results)
     attach_google(results)
+    attach_site_images(results)
     attach_articles(results)
     results["cat:videos"] = build_videos()
     # Só publica notícias com foto ou vídeo (capa), para o app não ficar feio
