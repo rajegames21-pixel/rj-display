@@ -205,7 +205,7 @@
                     <select id="region-select" onchange="setRegion(this.value)" class="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <!-- Preenchido via JS -->
                     </select>
-                    <p class="text-xs text-zinc-500 mt-2">O clima também passa a mostrar a capital do estado escolhido.</p>
+                    <p class="text-xs text-zinc-500 mt-2">Se a localização não for permitida, o clima mostra a capital do estado escolhido.</p>
                 </div>
 
                 <div>
@@ -327,9 +327,43 @@
         setInterval(updateTime, 1000);
         updateTime();
 
-        // --- Weather Logic (Open-Meteo API) — capital do estado escolhido ---
-        async function fetchWeather() {
+        // --- Localização do usuário ---
+        // Se o usuário permitir, o clima mostra a cidade atual dele.
+        // Caso contrário, usa a capital do estado escolhido (Brasília por padrão).
+        let userLocation = null;
+
+        async function reverseGeocode(lat, lon) {
+            try {
+                const url = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=pt`;
+                const data = await (await fetch(url)).json();
+                return data.city || data.locality || data.principalSubdivision || 'Sua localização';
+            } catch (e) {
+                return 'Sua localização';
+            }
+        }
+
+        function requestUserLocation() {
+            if (!navigator.geolocation) return;
+            navigator.geolocation.getCurrentPosition(async pos => {
+                const lat = pos.coords.latitude.toFixed(3);
+                const lon = pos.coords.longitude.toFixed(3);
+                userLocation = { lat, lon, city: await reverseGeocode(lat, lon) };
+                fetchWeather();
+            }, () => {
+                userLocation = null; // usuário recusou: fica a capital
+                fetchWeather();
+            }, { timeout: 15000, maximumAge: 30 * 60 * 1000 });
+        }
+
+        function weatherPlace() {
+            if (userLocation) return userLocation;
             const region = REGIONS[currentRegion];
+            return { lat: region.lat, lon: region.lon, city: region.city };
+        }
+
+        // --- Weather Logic (Open-Meteo API) ---
+        async function fetchWeather() {
+            const region = weatherPlace();
             try {
                 const url = `https://api.open-meteo.com/v1/forecast?latitude=${region.lat}&longitude=${region.lon}&current_weather=true`;
                 const response = await fetch(url);
@@ -362,10 +396,13 @@
             }
         }
         setInterval(fetchWeather, 300000); // Update every 5 mins
+        setInterval(requestUserLocation, 30 * 60 * 1000); // Atualiza a cidade a cada 30 min
 
         // --- Notícias reais (RSS do g1 + Google Notícias) ---
-        // O site não tem servidor, então os feeds passam por proxies públicos
-        // de CORS. Usamos vários em paralelo e o primeiro que responder vence.
+        // Fonte principal: o GitHub Actions (scripts/fetch_news.py) busca os
+        // feeds a cada 15 min e publica news/<UF>.json na branch news-data.
+        // Reserva: buscar os feeds direto, via serviços públicos de CORS.
+        const NEWS_DATA_URL = 'https://raw.githubusercontent.com/rajegames21-pixel/rj-display/news-data/news/';
         const GOOGLE_NEWS = 'https://news.google.com/rss';
         const GOOGLE_PARAMS = 'hl=pt-BR&gl=BR&ceid=BR:pt-419';
         const CORS_PROXIES = [
@@ -397,18 +434,56 @@
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), ms);
             try {
-                const res = await fetch(url, { signal: controller.signal });
+                const res = await fetch(url, { signal: controller.signal, cache: 'no-store' });
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                const text = await res.text();
-                if (!/<(rss|feed|channel|item)[\s>]/i.test(text)) throw new Error('Resposta não é um feed');
-                return text;
+                return await res.text();
             } finally {
                 clearTimeout(timer);
             }
         }
 
-        function fetchFeedText(url) {
-            return Promise.any(CORS_PROXIES.map(proxy => fetchWithTimeout(proxy(url), 12000)));
+        async function fetchViaProxy(proxy, url) {
+            const text = await fetchWithTimeout(proxy(url), 12000);
+            if (!/<(rss|feed|channel|item)[\s>]/i.test(text)) throw new Error('Resposta não é um feed');
+            return parseFeed(text, url);
+        }
+
+        // rss2json já devolve o feed convertido em JSON (com CORS liberado)
+        async function fetchViaRss2Json(url) {
+            const text = await fetchWithTimeout(`https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`, 12000);
+            const data = JSON.parse(text);
+            if (data.status !== 'ok') throw new Error(data.message || 'rss2json falhou');
+            const isGoogle = url.includes('news.google.com');
+            return data.items.map(it => {
+                let title = (it.title || '').trim();
+                let source = isGoogle ? 'Google Notícias' : 'g1';
+                if (isGoogle) {
+                    const cut = title.lastIndexOf(' - ');
+                    if (cut > 0) { source = title.slice(cut + 3); title = title.slice(0, cut); }
+                }
+                let summary = isGoogle ? '' : htmlToText(it.description);
+                if (summary.length > 240) summary = summary.slice(0, 237).trimEnd() + '…';
+                const enclosure = it.enclosure || {};
+                const image = it.thumbnail || (/^image\//.test(enclosure.type || '') ? enclosure.link : '') ||
+                    ((/<img[^>]+src=["']([^"']+)["']/i.exec(it.description || '') || [])[1] || '');
+                // rss2json devolve a data em UTC no formato "AAAA-MM-DD HH:MM:SS"
+                const date = new Date((it.pubDate || '').replace(' ', 'T') + 'Z');
+                return { id: it.link, link: it.link, title, summary, source, image, date: isNaN(date) ? 0 : date.getTime() };
+            }).filter(n => n.title && n.link);
+        }
+
+        function fetchFeedLive(url) {
+            return Promise.any([
+                ...CORS_PROXIES.map(proxy => fetchViaProxy(proxy, url)),
+                fetchViaRss2Json(url)
+            ]);
+        }
+
+        async function loadPrebuiltNews(code) {
+            // O parâmetro muda a cada 5 min para não pegar versão velha do cache
+            const text = await fetchWithTimeout(`${NEWS_DATA_URL}${code}.json?v=${Math.floor(Date.now() / 300000)}`, 10000);
+            const data = JSON.parse(text);
+            return Array.isArray(data.items) ? data.items : [];
         }
 
         function htmlToText(html) {
@@ -470,9 +545,14 @@
         }
 
         async function loadNews(code) {
-            const results = await Promise.allSettled(
-                feedsForRegion(code).map(url => fetchFeedText(url).then(text => parseFeed(text, url)))
-            );
+            try {
+                const prebuilt = await loadPrebuiltNews(code);
+                if (prebuilt.length) return prebuilt.slice(0, MAX_NEWS);
+            } catch (err) {
+                console.warn('Notícias do GitHub indisponíveis, buscando direto:', err);
+            }
+
+            const results = await Promise.allSettled(feedsForRegion(code).map(fetchFeedLive));
             const seen = new Set();
             const all = [];
             results.forEach(r => {
@@ -837,6 +917,7 @@
         populateRegions();
         updateFavBadge();
         fetchWeather();
+        requestUserLocation();
         refreshNews(true);
         refreshInterval = setInterval(() => refreshNews(false), REFRESH_MS);
         autoFullscreen();
