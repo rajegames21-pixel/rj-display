@@ -2,7 +2,7 @@ name: Atualizar notícias
 
 on:
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
   push:
     branches: [main]
@@ -15,7 +15,7 @@ permissions:
 
 concurrency:
   group: news
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   update:
@@ -27,8 +27,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Matérias já baixadas antes são reaproveitadas
+      - name: Baixar dados anteriores
+        run: git clone -q --depth 1 --branch news-data "https://github.com/${{ github.repository }}.git" "$RUNNER_TEMP/prev" || true
+
       - name: Buscar notícias
-        run: python scripts/fetch_news.py "$RUNNER_TEMP/site/news"
+        run: python scripts/fetch_news.py "$RUNNER_TEMP/site/news" "$RUNNER_TEMP/prev/news"
 
       # Publica só os JSON na branch news-data (um único commit, sem histórico)
       - name: Publicar na branch news-data
