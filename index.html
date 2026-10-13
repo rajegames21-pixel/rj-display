@@ -87,6 +87,24 @@
            ao soltar o dedo ela volta deslizando */
         #news-container.reading #news-media { width: 0; opacity: 0; transform: translateX(40px); }
 
+        /* Capa de vídeo: zoom lento e deslizando, em loop (efeito "Ken Burns") */
+        .news-img.kenburns { animation: kenburns 9s ease-in-out infinite alternate; transform-origin: 60% 40%; }
+        @keyframes kenburns {
+            from { transform: scale(1) translate(0, 0); }
+            to { transform: scale(1.22) translate(-4%, 3%); }
+        }
+        /* Botão de play pulsando sobre a capa do vídeo */
+        .play-pulse { position: relative; }
+        .play-pulse::before, .play-pulse::after {
+            content: ''; position: absolute; inset: 0; border-radius: 9999px;
+            border: 2px solid rgba(255, 255, 255, 0.7); animation: playPulse 2s ease-out infinite;
+        }
+        .play-pulse::after { animation-delay: 1s; }
+        @keyframes playPulse {
+            from { transform: scale(1); opacity: 0.8; }
+            to { transform: scale(1.9); opacity: 0; }
+        }
+
         /* Aviso de notícias novas */
         #new-toast { transform: translate(-50%, 0); transition: opacity 0.35s ease, transform 0.35s ease; }
         #new-toast.hide { opacity: 0; transform: translate(-50%, -20px); pointer-events: none; }
@@ -217,7 +235,7 @@
                     </div>
                     <!-- Matéria com vídeo: capa primeiro + selo; o toque abre o vídeo no g1 -->
                     <div id="video-badge" class="hidden absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div class="w-16 h-16 rounded-full bg-black/55 backdrop-blur-sm flex items-center justify-center text-white text-2xl shadow-2xl">
+                        <div class="play-pulse w-16 h-16 rounded-full bg-black/55 backdrop-blur-sm flex items-center justify-center text-white text-2xl shadow-2xl">
                             <i class="fa-solid fa-play ml-1"></i>
                         </div>
                         <span class="absolute top-3 left-3 bg-black/60 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full"><i class="fa-solid fa-video mr-1"></i>Vídeo</span>
@@ -306,6 +324,10 @@
     </div>
 
     <script>
+        // Versão do app. Ao publicar uma mudança, atualize aqui E em version.json:
+        // quem estiver com o RJC aberto recarrega sozinho para a versão nova.
+        const APP_VERSION = '2026.10.13-1';
+
         // --- Helpers ---
         function storageGet(key, fallback) {
             try {
@@ -791,6 +813,7 @@
             const next = imageLayers[1 - activeLayer];
             next.onload = () => {
                 if (token !== slideToken) return;
+                next.classList.toggle('kenburns', videoPosters.has(slideImages[i]));
                 next.style.opacity = '1';
                 imageLayers[activeLayer].style.opacity = '0';
                 activeLayer = 1 - activeLayer;
@@ -1069,9 +1092,18 @@
 
                 newsList = current ? [current, ...newOnes, ...rest] : [...newOnes, ...rest];
                 currentIndex = 0;
-                // A notícia na tela continua a mesma: só atualiza o contador
-                if (current) newsCounter.textContent = `1/${newsList.length}`;
-                else renderNews();
+                const reading = isHolding || newsContainer.classList.contains('reading');
+                if (newOnes.length && current && !reading) {
+                    // Notícias novas sobem sozinhas: já mostra a primeira
+                    currentIndex = 1;
+                    renderNews();
+                    resetTimer();
+                } else if (current) {
+                    // Usuário lendo: a notícia continua; as novas vêm logo em seguida
+                    newsCounter.textContent = `1/${newsList.length}`;
+                } else {
+                    renderNews();
+                }
 
                 if (newOnes.length) showNewToast(newOnes.length);
                 return newOnes.length;
@@ -1086,14 +1118,14 @@
         let toastTimer;
 
         function showNewToast(count) {
-            showToast(count === 1 ? '1 notícia nova encontrada' : `${count} notícias novas encontradas`, true);
+            showToast(count === 1 ? '1 notícia nova chegou' : `${count} notícias novas chegaram`, false, 'fa-bell animate-bounce');
             if (navigator.vibrate) navigator.vibrate(60);
         }
 
-        function showToast(message, withButton) {
+        function showToast(message, withButton, icon) {
             document.getElementById('new-toast-text').textContent = message;
             document.getElementById('new-toast-btn').classList.toggle('hidden', !withButton);
-            document.getElementById('new-toast-icon').className = `fa-solid ${withButton ? 'fa-bell animate-bounce' : 'fa-circle-check'}`;
+            document.getElementById('new-toast-icon').className = `fa-solid ${icon || (withButton ? 'fa-bell animate-bounce' : 'fa-circle-check')}`;
             newToast.classList.remove('hide');
             clearTimeout(toastTimer);
             toastTimer = setTimeout(() => newToast.classList.add('hide'), 7000);
@@ -1215,6 +1247,12 @@
                 modal.classList.remove('opacity-0');
             }, 10);
         }
+
+        // Tocar fora da janela (no fundo escuro) também fecha
+        ['settings-modal', 'favorites-modal'].forEach(id => {
+            const modal = document.getElementById(id);
+            modal.addEventListener('click', e => { if (e.target === modal) closeModal(id); });
+        });
 
         function closeModal(id) {
             const modal = document.getElementById(id);
@@ -1363,6 +1401,39 @@
         // O pedido só vale depois de um toque em alguns navegadores
         document.addEventListener('click', updateWakeLock, { capture: true });
 
+        // --- Atualização automática do app ---
+        const VERSION_CHECK_MS = 5 * 60 * 1000;
+
+        async function checkAppVersion() {
+            if (document.visibilityState !== 'visible') return;
+            try {
+                const res = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+                if (!res.ok) return;
+                const { version } = await res.json();
+                if (!version || version === APP_VERSION) return;
+                // Não interrompe quem está lendo: tenta de novo depois
+                if (isHolding || newsContainer.classList.contains('reading')) return;
+                // Já tentou esta versão e o GitHub ainda entregou a antiga: não insiste
+                if (storageGet('rjc_update_tried', null) === version) return;
+                storageSet('rjc_update_tried', version);
+                storageSet('rjc_updated_to', version);
+                location.replace(`${location.pathname}?v=${encodeURIComponent(version)}${location.hash}`);
+            } catch (e) {
+                // Sem conexão: tenta na próxima
+            }
+        }
+
+        function announceUpdate() {
+            const updated = storageGet('rjc_updated_to', null);
+            if (updated && updated === APP_VERSION) {
+                showToast('RJC atualizado para a versão mais nova', false, 'fa-wand-magic-sparkles');
+            }
+            if (updated) storageSet('rjc_updated_to', null);
+        }
+
+        setInterval(checkAppVersion, VERSION_CHECK_MS);
+        document.addEventListener('visibilitychange', checkAppVersion);
+
         // --- Fullscreen ---
         // Navegadores só permitem tela cheia após um toque do usuário, então:
         // ao girar para horizontal tentamos entrar direto; se o navegador
@@ -1449,6 +1520,8 @@
         initBattery();
         renderWakeToggle();
         updateWakeLock();
+        announceUpdate();
+        setTimeout(checkAppVersion, 5000);
         renderCategoryButtons();
         updateFavBadge();
         fetchWeather();
