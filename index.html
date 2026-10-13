@@ -297,17 +297,11 @@
                 <div>
                     <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Categorias <span class="normal-case font-normal tracking-normal">(escolha quantas quiser)</span></label>
                     <div class="grid grid-cols-3 gap-2" id="category-buttons">
-                        <!-- Preenchido via JS -->
+                        <!-- Preenchido via JS (categorias + cidades) -->
                     </div>
+                    <p class="text-xs text-zinc-500 mt-2">As cidades vêm do arquivo <b>cidades.json</b> no GitHub; a sua aparece primeiro com o pino.</p>
                 </div>
 
-                <div>
-                    <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Cidades</label>
-                    <div class="grid grid-cols-3 gap-2" id="city-buttons">
-                        <!-- Preenchido via JS (lista do robô: cidades.json) -->
-                    </div>
-                    <p class="text-xs text-zinc-500 mt-2"><i class="fa-solid fa-location-dot text-blue-500 mr-1"></i>marca a sua cidade. Para incluir outra cidade, adicione em <b>cidades.json</b> no GitHub.</p>
-                </div>
 
                 <div>
                     <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Aparência</label>
@@ -756,22 +750,28 @@
             return String(name || '').toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '');
         }
 
-        function renderCityButtons() {
-            const box = document.getElementById('city-buttons');
-            if (!cityList.length) {
-                box.innerHTML = '<p class="col-span-3 text-xs text-zinc-500">Carregando cidades…</p>';
-                return;
-            }
+        function categoryChip(slug, icon, label, active) {
+            return `<button onclick="toggleCategory('${slug}')" class="rounded-xl px-2 py-2.5 text-xs transition truncate ${active
+                ? 'bg-blue-600 text-white font-semibold shadow-lg shadow-blue-500/20'
+                : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-medium hover:bg-zinc-200 dark:hover:bg-zinc-700'}">
+                <i class="fa-solid ${icon} mr-1"></i>${escapeHtml(label)}</button>`;
+        }
+
+        // Chips das cidades (a do usuário primeiro, como "Minha cidade")
+        function cityChips() {
             const myCity = normalizePlace(userLocation && userLocation.city);
-            box.innerHTML = cityList.map(c => {
+            const isMine = c => myCity && normalizePlace(c.nome) === myCity;
+            return [...cityList].sort((a, b) => isMine(b) - isMine(a)).map(c => {
                 const slug = `cidade:${c.slug}`;
-                const active = selectedCats.includes(slug);
-                const mine = myCity && normalizePlace(c.nome) === myCity;
-                return `<button onclick="toggleCategory('${slug}')" class="rounded-xl px-2 py-2.5 text-xs transition truncate ${active
-                    ? 'bg-blue-600 text-white font-semibold shadow-lg shadow-blue-500/20'
-                    : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-medium hover:bg-zinc-200 dark:hover:bg-zinc-700'}">
-                    <i class="fa-solid ${mine ? 'fa-location-dot' : 'fa-city'} mr-1"></i>${escapeHtml(c.nome)}</button>`;
-            }).join('');
+                return isMine(c)
+                    ? categoryChip(slug, 'fa-location-dot', `Minha cidade (${c.nome})`, selectedCats.includes(slug))
+                    : categoryChip(slug, 'fa-city', c.nome, selectedCats.includes(slug));
+            });
+        }
+
+        function renderCityButtons() {
+            if (document.getElementById('settings-modal').classList.contains('hidden')) return;
+            renderCategoryButtons();
         }
 
         // Junta as categorias escolhidas, alternando entre elas para variar
@@ -1433,15 +1433,13 @@
         }
 
         function renderCategoryButtons() {
-            document.getElementById('category-buttons').innerHTML = Object.entries(CATEGORIES).map(([slug, c]) => {
-                const active = selectedCats.includes(slug);
-                const label = slug === 'destaques' ? `${c.label} (${currentRegion === 'BR' ? 'Brasil' : currentRegion})` : c.label;
-                return `<button onclick="toggleCategory('${slug}')" class="rounded-xl px-2 py-2.5 text-xs transition truncate ${active
-                    ? 'bg-blue-600 text-white font-semibold shadow-lg shadow-blue-500/20'
-                    : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-medium hover:bg-zinc-200 dark:hover:bg-zinc-700'}">
-                    <i class="fa-solid ${c.icon} mr-1"></i>${escapeHtml(label)}</button>`;
-            }).join('');
-            renderCityButtons();
+            const entries = Object.entries(CATEGORIES);
+            const chips = entries.map(([slug, c]) => categoryChip(slug, c.icon,
+                slug === 'destaques' ? `${c.label} (${currentRegion === 'BR' ? 'Brasil' : currentRegion})` : c.label,
+                selectedCats.includes(slug)));
+            // Cidades logo depois de Destaques
+            chips.splice(1, 0, ...cityChips());
+            document.getElementById('category-buttons').innerHTML = chips.join('');
         }
 
         let categoryRefreshTimer;
