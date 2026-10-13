@@ -3,15 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>RJ Display - StandBy Mode</title>
+    <title>RJC Display - StandBy Mode</title>
     <!-- Instalável na tela de início: abre sem barras do navegador -->
     <link rel="manifest" href="manifest.webmanifest">
     <meta name="theme-color" content="#000000">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="RJ Display">
+    <meta name="apple-mobile-web-app-title" content="RJC Display">
     <link rel="apple-touch-icon" href="icons/icon-180.png">
+    <script>
+        // Aplica o tema salvo antes de desenhar a página (evita "piscar")
+        (function () {
+            let theme = 'dark';
+            try { theme = localStorage.getItem('rjc_theme') || 'dark'; } catch (e) {}
+            const dark = theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+            document.documentElement.classList.toggle('dark', dark);
+        })();
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -38,8 +47,6 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body {
-            background-color: #000000;
-            color: #f4f4f5;
             font-family: 'Inter', sans-serif;
             overflow: hidden;
             touch-action: manipulation;
@@ -54,33 +61,40 @@
             padding-left: max(1.5rem, env(safe-area-inset-left));
             padding-right: max(1.5rem, env(safe-area-inset-right));
         }
-        
+
         /* Smooth transitions for rotating content */
-        .fade-enter {
-            opacity: 0;
-            transform: translateY(10px);
-        }
         .fade-enter-active {
-            opacity: 1;
-            transform: translateY(0);
-            transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+            animation: fadeIn 0.5s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Barra de progresso até a próxima notícia */
+        #news-progress.running {
+            animation: progress var(--rotate-ms) linear forwards;
+        }
+        @keyframes progress {
+            from { width: 0%; }
+            to { width: 100%; }
         }
 
         /* Custom scrollbar for modals */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.35); border-radius: 10px; }
     </style>
 </head>
-<body class="w-screen bg-standby-bg text-white select-none">
+<body class="w-screen bg-zinc-100 text-zinc-900 dark:bg-standby-bg dark:text-zinc-100 select-none transition-colors">
 
     <!-- Portrait Warning Overlay (Forces Landscape UX) -->
-    <div id="portrait-warning" class="fixed inset-0 z-[999] bg-black portrait:flex landscape:hidden flex-col items-center justify-center text-center p-8">
-        <div class="w-24 h-24 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-6 shadow-[0_0_50px_rgba(255,255,255,0.05)]">
+    <div id="portrait-warning" class="fixed inset-0 z-[999] bg-zinc-100 dark:bg-black portrait:flex landscape:hidden flex-col items-center justify-center text-center p-8">
+        <div class="w-24 h-24 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 flex items-center justify-center mb-6 shadow-[0_0_50px_rgba(128,128,128,0.08)]">
             <i class="fa-solid fa-mobile-screen-button text-5xl text-zinc-400 rotate-90 animate-pulse"></i>
         </div>
-        <h1 class="text-3xl font-bold mb-3 tracking-tight">Rotacione seu iPhone</h1>
-        <p class="text-zinc-500 text-lg max-w-sm">O RJ Display foi projetado para a experiência StandBy no modo horizontal.</p>
+        <h1 class="text-3xl font-bold mb-3 tracking-tight">Rotacione seu celular</h1>
+        <p class="text-zinc-500 text-lg max-w-sm">O RJC Display foi projetado para a experiência StandBy no modo horizontal.</p>
     </div>
 
     <!-- Main Application Structure (Only visible in Landscape) -->
@@ -89,18 +103,18 @@
         <!-- Top Bar: Hora, Data, Clima e Ações -->
         <header class="w-full flex items-center justify-between gap-6 shrink-0">
             <div class="flex items-center gap-5 min-w-0">
-                <h1 id="current-time" class="text-6xl lg:text-7xl font-mono font-bold tracking-tighter leading-none text-transparent bg-clip-text bg-gradient-to-br from-white to-zinc-500">
+                <h1 id="current-time" class="text-6xl lg:text-7xl font-mono font-bold tracking-tighter leading-none text-transparent bg-clip-text bg-gradient-to-br from-zinc-900 to-zinc-500 dark:from-white dark:to-zinc-500">
                     00:00
                 </h1>
                 <div class="flex flex-col gap-1 min-w-0">
-                    <div class="text-blue-500 text-sm font-semibold tracking-widest uppercase flex items-center truncate">
+                    <div class="text-blue-600 dark:text-blue-500 text-sm font-semibold tracking-widest uppercase flex items-center truncate">
                         <i class="fa-regular fa-calendar mr-2"></i>
                         <span id="current-date">Carregando data...</span>
                     </div>
                     <!-- Weather Widget (Open-Meteo Integration) -->
-                    <div class="flex items-center gap-2 text-sm text-zinc-400">
+                    <div class="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400 min-w-0">
                         <i class="fa-solid fa-cloud-sun text-blue-400" id="weather-icon"></i>
-                        <span id="weather-temp" class="font-bold text-white">--°C</span>
+                        <span id="weather-temp" class="font-bold text-zinc-900 dark:text-white">--°C</span>
                         <span id="weather-desc" class="truncate">Buscando clima local...</span>
                     </div>
                 </div>
@@ -109,72 +123,97 @@
             <div class="flex items-center space-x-2 shrink-0">
                 <button onclick="openModal('favorites-modal')" class="text-zinc-500 hover:text-rose-500 transition relative p-2" title="Favoritos">
                     <i class="fa-solid fa-heart text-xl"></i>
-                    <span id="fav-count" class="absolute top-0 right-0 w-4 h-4 bg-rose-600 text-[9px] font-bold rounded-full flex items-center justify-center hidden">0</span>
+                    <span id="fav-count" class="absolute top-0 right-0 w-4 h-4 bg-rose-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center hidden">0</span>
                 </button>
-                <button onclick="openModal('settings-modal')" class="text-zinc-500 hover:text-white transition p-2" title="Configurações">
+                <button onclick="openModal('settings-modal')" class="text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition p-2" title="Configurações">
                     <i class="fa-solid fa-gear text-xl"></i>
                 </button>
-                <button onclick="toggleFullscreen()" class="text-zinc-500 hover:text-white transition p-2" title="Tela Cheia">
+                <button onclick="toggleFullscreen()" class="text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition p-2" title="Tela Cheia">
                     <i class="fa-solid fa-expand text-xl" id="fullscreen-icon"></i>
                 </button>
             </div>
         </header>
 
-        <!-- News Panel: ocupa todo o resto da tela -->
+        <!-- News Panel: ocupa todo o resto da tela. Tocar abre a notícia. -->
         <main class="flex-1 min-h-0 flex flex-col w-full">
-            <div id="news-container" class="flex-1 min-h-0 bg-standby-card border border-standby-border rounded-[2rem] px-8 py-6 shadow-2xl relative transition-all duration-500 flex flex-col">
-                <div class="flex justify-between items-center mb-3 shrink-0">
-                    <div class="flex items-center gap-3 min-w-0">
-                        <span id="news-tag" class="px-3 py-1 rounded-full text-xs font-bold bg-zinc-800 text-zinc-300">Categoria</span>
-                        <h2 class="text-xs font-semibold uppercase tracking-widest text-zinc-500 truncate">RJ News • <span id="active-category" class="text-white">Destaques</span></h2>
+            <div id="news-container" onclick="openCurrentNews()" class="flex-1 min-h-0 bg-white dark:bg-standby-card border border-zinc-200 dark:border-standby-border rounded-[2rem] shadow-xl dark:shadow-2xl relative overflow-hidden flex flex-row cursor-pointer">
+
+                <!-- Texto -->
+                <div class="flex-1 min-w-0 flex flex-col px-8 py-6">
+                    <div class="flex justify-between items-center mb-3 shrink-0 gap-3">
+                        <div class="flex items-center gap-3 min-w-0">
+                            <span id="news-tag" class="px-3 py-1 rounded-full text-xs font-bold bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 shrink-0">Brasil</span>
+                            <h2 class="text-xs font-semibold uppercase tracking-widest text-zinc-500 truncate">RJC News</h2>
+                        </div>
+                        <div class="flex items-center space-x-2 text-zinc-500 shrink-0">
+                            <button onclick="event.stopPropagation(); prevNews()" class="hover:text-zinc-900 dark:hover:text-white transition p-2" title="Anterior"><i class="fa-solid fa-chevron-left"></i></button>
+                            <span id="news-counter" class="text-xs font-mono">0/0</span>
+                            <button onclick="event.stopPropagation(); nextNews()" class="hover:text-zinc-900 dark:hover:text-white transition p-2" title="Próxima"><i class="fa-solid fa-chevron-right"></i></button>
+                            <button onclick="event.stopPropagation(); toggleFavorite()" class="w-10 h-10 rounded-full bg-zinc-100 dark:bg-zinc-900 flex items-center justify-center hover:bg-zinc-200 dark:hover:bg-zinc-800 transition active:scale-95" title="Favoritar">
+                                <i class="fa-regular fa-heart text-zinc-500" id="news-fav-icon"></i>
+                            </button>
+                        </div>
                     </div>
-                    <div class="flex items-center space-x-3 text-zinc-500 shrink-0">
-                        <button onclick="prevNews()" class="hover:text-white transition p-2"><i class="fa-solid fa-chevron-left"></i></button>
-                        <span id="news-counter" class="text-xs font-mono">1/5</span>
-                        <button onclick="nextNews()" class="hover:text-white transition p-2"><i class="fa-solid fa-chevron-right"></i></button>
-                        <button onclick="toggleFavorite()" class="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-500 hover:bg-zinc-800 transition active:scale-95">
-                            <i class="fa-regular fa-heart" id="news-fav-icon"></i>
-                        </button>
+
+                    <div id="news-body" class="flex-1 min-h-0 flex flex-col justify-center overflow-hidden">
+                        <h3 id="news-title" class="text-[clamp(1.25rem,6.5vh,3.75rem)] font-bold leading-tight mb-3 text-zinc-900 dark:text-zinc-100 line-clamp-4">
+                            Carregando as últimas notícias...
+                        </h3>
+                        <p id="news-summary" class="text-[clamp(0.9rem,3.6vh,1.6rem)] text-zinc-500 dark:text-zinc-400 leading-snug line-clamp-3">
+                            Buscando as notícias mais recentes da sua região.
+                        </p>
+                    </div>
+
+                    <div class="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800/80 flex justify-between items-center gap-3 text-xs text-zinc-500 shrink-0">
+                        <span id="news-source" class="truncate"><i class="fa-regular fa-newspaper mr-1 text-blue-500"></i> RJC News</span>
+                        <span class="flex items-center gap-3 shrink-0">
+                            <span id="news-time"></span>
+                            <span class="text-blue-600 dark:text-blue-400 font-semibold">Toque para ler <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i></span>
+                        </span>
                     </div>
                 </div>
 
-                <div class="flex-1 min-h-0 flex flex-col justify-center overflow-hidden">
-                    <h3 id="news-title" class="text-[clamp(1.5rem,7vh,4.5rem)] font-bold leading-tight mb-3 text-zinc-100 line-clamp-3">
-                        Carregando as últimas notícias...
-                    </h3>
-                    <p id="news-summary" class="text-[clamp(1rem,4vh,2rem)] text-zinc-400 leading-snug line-clamp-3">
-                        O algoritmo está selecionando as melhores atualizações de acordo com suas preferências.
-                    </p>
+                <!-- Imagem da notícia -->
+                <div class="w-[38%] shrink-0 relative bg-zinc-100 dark:bg-zinc-900">
+                    <img id="news-image" alt="" referrerpolicy="no-referrer" class="absolute inset-0 w-full h-full object-cover hidden">
+                    <div id="news-image-placeholder" class="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-blue-500/20 to-purple-500/20">
+                        <i class="fa-regular fa-newspaper text-6xl text-blue-500/50"></i>
+                    </div>
                 </div>
 
-                <div class="mt-3 pt-3 border-t border-zinc-800/80 flex justify-between items-center text-xs text-zinc-500 shrink-0">
-                    <span id="news-source"><i class="fa-regular fa-newspaper mr-1"></i> RJ Source</span>
-                    <span id="news-time">agora mesmo</span>
+                <!-- Progresso até a próxima notícia -->
+                <div class="absolute left-0 right-0 bottom-0 h-1 bg-transparent">
+                    <div id="news-progress" class="h-full bg-blue-500/70"></div>
                 </div>
             </div>
         </main>
     </div>
 
     <!-- Settings Modal -->
-    <div id="settings-modal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 items-center justify-center hidden opacity-0 transition-opacity duration-300 flex">
-        <div class="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-3xl p-8 shadow-2xl relative">
-            <button onclick="closeModal('settings-modal')" class="absolute top-6 right-6 text-zinc-500 hover:text-white transition">
+    <div id="settings-modal" class="fixed inset-0 bg-black/60 dark:bg-black/90 backdrop-blur-md z-50 items-center justify-center hidden opacity-0 transition-opacity duration-300 flex p-4">
+        <div class="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 w-full max-w-lg rounded-3xl p-6 shadow-2xl relative max-h-full overflow-y-auto">
+            <button onclick="closeModal('settings-modal')" class="absolute top-5 right-5 text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition">
                 <i class="fa-solid fa-xmark text-xl"></i>
             </button>
-            
-            <h2 class="text-2xl font-bold mb-2">Configurações</h2>
-            <p class="text-sm text-zinc-400 mb-8">Personalize seu feed de notícias do RJ Display.</p>
 
-            <div class="space-y-6">
+            <h2 class="text-2xl font-bold mb-1">Configurações</h2>
+            <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-5">Personalize seu RJC Display.</p>
+
+            <div class="space-y-5">
                 <div>
-                    <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-3">Categorias de Notícias</label>
-                    <div class="grid grid-cols-2 gap-3" id="category-filters">
-                        <!-- Buttons will be initialized via JS to match constraints -->
-                        <button onclick="setCategory('Todas')" class="cat-btn bg-white text-black font-semibold rounded-xl py-3 text-sm transition">Todas</button>
-                        <button onclick="setCategory('Mundo')" class="cat-btn bg-zinc-800 text-zinc-400 font-medium rounded-xl py-3 text-sm transition hover:bg-zinc-700 hover:text-white">Mundo</button>
-                        <button onclick="setCategory('Brasil')" class="cat-btn bg-zinc-800 text-zinc-400 font-medium rounded-xl py-3 text-sm transition hover:bg-zinc-700 hover:text-white">Brasil</button>
-                        <button onclick="setCategory('Economia')" class="cat-btn bg-zinc-800 text-zinc-400 font-medium rounded-xl py-3 text-sm transition hover:bg-zinc-700 hover:text-white">Economia</button>
-                        <button onclick="setCategory('Tecnologia')" class="cat-btn bg-zinc-800 text-zinc-400 font-medium rounded-xl py-3 text-sm transition hover:bg-zinc-700 hover:text-white">Tecnologia</button>
+                    <label for="region-select" class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Notícias de qual estado?</label>
+                    <select id="region-select" onchange="setRegion(this.value)" class="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-xl px-4 py-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <!-- Preenchido via JS -->
+                    </select>
+                    <p class="text-xs text-zinc-500 mt-2">O clima também passa a mostrar a capital do estado escolhido.</p>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Aparência</label>
+                    <div class="grid grid-cols-3 gap-3" id="theme-buttons">
+                        <button data-theme="dark" onclick="setTheme('dark')" class="theme-btn rounded-xl py-3 text-sm transition"><i class="fa-solid fa-moon mr-1"></i> Escuro</button>
+                        <button data-theme="light" onclick="setTheme('light')" class="theme-btn rounded-xl py-3 text-sm transition"><i class="fa-solid fa-sun mr-1"></i> Claro</button>
+                        <button data-theme="auto" onclick="setTheme('auto')" class="theme-btn rounded-xl py-3 text-sm transition"><i class="fa-solid fa-circle-half-stroke mr-1"></i> Auto</button>
                     </div>
                 </div>
             </div>
@@ -182,22 +221,97 @@
     </div>
 
     <!-- Favorites Modal -->
-    <div id="favorites-modal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 items-center justify-center hidden opacity-0 transition-opacity duration-300 flex">
-        <div class="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-8 shadow-2xl relative flex flex-col max-h-[85vh]">
-            <button onclick="closeModal('favorites-modal')" class="absolute top-6 right-6 text-zinc-500 hover:text-white transition">
+    <div id="favorites-modal" class="fixed inset-0 bg-black/60 dark:bg-black/90 backdrop-blur-md z-50 items-center justify-center hidden opacity-0 transition-opacity duration-300 flex p-4">
+        <div class="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 w-full max-w-2xl rounded-3xl p-6 shadow-2xl relative flex flex-col max-h-full">
+            <button onclick="closeModal('favorites-modal')" class="absolute top-5 right-5 text-zinc-500 hover:text-zinc-900 dark:hover:text-white transition">
                 <i class="fa-solid fa-xmark text-xl"></i>
             </button>
-            
-            <h2 class="text-2xl font-bold mb-2 flex items-center"><i class="fa-solid fa-heart text-rose-500 mr-3"></i> Notícias Favoritas</h2>
-            <p class="text-sm text-zinc-400 mb-6">Artigos que você salvou para ler depois.</p>
 
-            <div id="favorites-list" class="flex-1 overflow-y-auto space-y-4 pr-2">
+            <h2 class="text-2xl font-bold mb-1 flex items-center"><i class="fa-solid fa-heart text-rose-500 mr-3"></i> Notícias Favoritas</h2>
+            <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">Toque em uma notícia para abrir.</p>
+
+            <div id="favorites-list" class="flex-1 overflow-y-auto space-y-3 pr-2">
                 <!-- Populated by JS -->
             </div>
         </div>
     </div>
 
     <script>
+        // --- Helpers ---
+        function storageGet(key, fallback) {
+            try {
+                const value = localStorage.getItem(key);
+                return value === null ? fallback : JSON.parse(value);
+            } catch (e) {
+                return fallback;
+            }
+        }
+        function storageSet(key, value) {
+            try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) {}
+        }
+        function escapeHtml(str) {
+            return String(str || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+
+        // --- Estados (feed regional do g1 + capital para o clima) ---
+        const REGIONS = {
+            BR: { name: 'Brasil (todas)', city: 'Brasília', lat: -15.79, lon: -47.88 },
+            AC: { name: 'Acre', slug: 'acre', city: 'Rio Branco', lat: -9.97, lon: -67.81 },
+            AL: { name: 'Alagoas', slug: 'alagoas', city: 'Maceió', lat: -9.65, lon: -35.73 },
+            AP: { name: 'Amapá', slug: 'amapa', city: 'Macapá', lat: 0.03, lon: -51.07 },
+            AM: { name: 'Amazonas', slug: 'amazonas', city: 'Manaus', lat: -3.12, lon: -60.02 },
+            BA: { name: 'Bahia', slug: 'bahia', city: 'Salvador', lat: -12.97, lon: -38.50 },
+            CE: { name: 'Ceará', slug: 'ceara', city: 'Fortaleza', lat: -3.73, lon: -38.52 },
+            DF: { name: 'Distrito Federal', slug: 'distrito-federal', city: 'Brasília', lat: -15.79, lon: -47.88 },
+            ES: { name: 'Espírito Santo', slug: 'espirito-santo', city: 'Vitória', lat: -20.32, lon: -40.34 },
+            GO: { name: 'Goiás', slug: 'goias', city: 'Goiânia', lat: -16.68, lon: -49.25 },
+            MA: { name: 'Maranhão', slug: 'maranhao', city: 'São Luís', lat: -2.53, lon: -44.30 },
+            MT: { name: 'Mato Grosso', slug: 'mato-grosso', city: 'Cuiabá', lat: -15.60, lon: -56.10 },
+            MS: { name: 'Mato Grosso do Sul', slug: 'mato-grosso-do-sul', city: 'Campo Grande', lat: -20.44, lon: -54.65 },
+            MG: { name: 'Minas Gerais', slug: 'minas-gerais', city: 'Belo Horizonte', lat: -19.92, lon: -43.94 },
+            PA: { name: 'Pará', slug: 'para', city: 'Belém', lat: -1.46, lon: -48.50 },
+            PB: { name: 'Paraíba', slug: 'paraiba', city: 'João Pessoa', lat: -7.12, lon: -34.86 },
+            PR: { name: 'Paraná', slug: 'parana', city: 'Curitiba', lat: -25.43, lon: -49.27 },
+            PE: { name: 'Pernambuco', slug: 'pernambuco', city: 'Recife', lat: -8.05, lon: -34.88 },
+            PI: { name: 'Piauí', slug: 'piaui', city: 'Teresina', lat: -5.09, lon: -42.80 },
+            RJ: { name: 'Rio de Janeiro', slug: 'rio-de-janeiro', city: 'Rio de Janeiro', lat: -22.91, lon: -43.17 },
+            RN: { name: 'Rio Grande do Norte', slug: 'rio-grande-do-norte', city: 'Natal', lat: -5.79, lon: -35.21 },
+            RS: { name: 'Rio Grande do Sul', slug: 'rio-grande-do-sul', city: 'Porto Alegre', lat: -30.03, lon: -51.23 },
+            RO: { name: 'Rondônia', slug: 'rondonia', city: 'Porto Velho', lat: -8.76, lon: -63.90 },
+            RR: { name: 'Roraima', slug: 'roraima', city: 'Boa Vista', lat: 2.82, lon: -60.67 },
+            SC: { name: 'Santa Catarina', slug: 'santa-catarina', city: 'Florianópolis', lat: -27.60, lon: -48.55 },
+            SP: { name: 'São Paulo', slug: 'sao-paulo', city: 'São Paulo', lat: -23.55, lon: -46.63 },
+            SE: { name: 'Sergipe', slug: 'sergipe', city: 'Aracaju', lat: -10.91, lon: -37.07 },
+            TO: { name: 'Tocantins', slug: 'tocantins', city: 'Palmas', lat: -10.18, lon: -48.33 }
+        };
+
+        let currentRegion = storageGet('rjc_region', 'BR');
+        if (!REGIONS[currentRegion]) currentRegion = 'BR';
+
+        // --- Tema (escuro / claro / automático) ---
+        let currentTheme = 'dark';
+        try { currentTheme = localStorage.getItem('rjc_theme') || 'dark'; } catch (e) {}
+        const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+
+        function applyTheme() {
+            const dark = currentTheme === 'dark' || (currentTheme === 'auto' && darkQuery.matches);
+            document.documentElement.classList.toggle('dark', dark);
+            document.querySelector('meta[name="theme-color"]').setAttribute('content', dark ? '#000000' : '#f4f4f5');
+            document.querySelectorAll('.theme-btn').forEach(btn => {
+                const active = btn.dataset.theme === currentTheme;
+                btn.className = 'theme-btn rounded-xl py-3 text-sm transition ' + (active
+                    ? 'bg-blue-600 text-white font-semibold shadow-lg shadow-blue-500/20'
+                    : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400 font-medium hover:bg-zinc-200 dark:hover:bg-zinc-700');
+            });
+        }
+
+        function setTheme(theme) {
+            currentTheme = theme;
+            try { localStorage.setItem('rjc_theme', theme); } catch (e) {}
+            applyTheme();
+        }
+        darkQuery.addEventListener('change', applyTheme);
+
         // --- Clock & Date Logic ---
         function updateTime() {
             const now = new Date();
@@ -213,62 +327,188 @@
         setInterval(updateTime, 1000);
         updateTime();
 
-        // --- Weather Logic (Open-Meteo API) ---
+        // --- Weather Logic (Open-Meteo API) — capital do estado escolhido ---
         async function fetchWeather() {
+            const region = REGIONS[currentRegion];
             try {
-                // Using coordinates for São Paulo, Brazil as default fallback for demo
-                const lat = -23.5505;
-                const lon = -46.6333;
-                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`;
-                
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${region.lat}&longitude=${region.lon}&current_weather=true`;
                 const response = await fetch(url);
                 const data = await response.json();
-                
-                if(data && data.current_weather) {
+
+                if (data && data.current_weather) {
                     const temp = Math.round(data.current_weather.temperature);
                     const code = data.current_weather.weathercode;
-                    
+
                     document.getElementById('weather-temp').textContent = `${temp}°C`;
-                    
+
                     // Simple weather code mapping based on WMO standards
-                    let iconClass = "fa-cloud-sun";
+                    let iconClass = "fa-cloud-sun text-blue-400";
                     let desc = "Parcialmente Nublado";
-                    
+
                     if (code === 0) { iconClass = "fa-sun text-yellow-400"; desc = "Céu Limpo"; }
-                    else if (code >= 1 && code <= 3) { iconClass = "fa-cloud-sun text-gray-300"; desc = "Nublado"; }
-                    else if (code >= 45 && code <= 48) { iconClass = "fa-smog text-gray-400"; desc = "Neblina"; }
+                    else if (code >= 1 && code <= 3) { iconClass = "fa-cloud-sun text-zinc-400"; desc = "Nublado"; }
+                    else if (code >= 45 && code <= 48) { iconClass = "fa-smog text-zinc-400"; desc = "Neblina"; }
                     else if (code >= 51 && code <= 67) { iconClass = "fa-cloud-rain text-blue-400"; desc = "Chuva"; }
-                    else if (code >= 71 && code <= 77) { iconClass = "fa-snowflake text-white"; desc = "Neve"; }
+                    else if (code >= 71 && code <= 77) { iconClass = "fa-snowflake text-sky-300"; desc = "Neve"; }
+                    else if (code >= 80 && code <= 82) { iconClass = "fa-cloud-showers-heavy text-blue-400"; desc = "Pancadas de Chuva"; }
                     else if (code >= 95) { iconClass = "fa-cloud-bolt text-purple-400"; desc = "Tempestade"; }
 
                     document.getElementById('weather-icon').className = `fa-solid ${iconClass}`;
-                    document.getElementById('weather-desc').textContent = desc;
+                    document.getElementById('weather-desc').textContent = `${desc} • ${region.city}`;
                 }
             } catch (error) {
                 console.error("Erro ao buscar clima:", error);
                 document.getElementById('weather-desc').textContent = "Clima Indisponível";
             }
         }
-        fetchWeather();
         setInterval(fetchWeather, 300000); // Update every 5 mins
 
-        // --- News Database & Logic ---
-        const newsDB = [
-            { id: 1, category: "Mundo", title: "Cúpula do G20 define novas metas de sustentabilidade global para 2030", summary: "Líderes mundiais assinam acordo histórico visando reduzir as emissões de carbono em 45% nos próximos quatro anos.", source: "Global News", time: "Há 15 min" },
-            { id: 2, category: "Brasil", title: "Novo marco fiscal é aprovado e promete estabilidade para investimentos", summary: "Congresso aprova medidas que visam equilibrar as contas públicas e fomentar o crescimento econômico sustentável no país.", source: "BR Atualidades", time: "Há 30 min" },
-            { id: 3, category: "Economia", title: "Bolsa de Valores atinge máxima histórica puxada pelo setor de energia", summary: "Companhias de energia renovável lideram ganhos no pregão desta quarta-feira, animando investidores institucionais.", source: "Mercado & Valor", time: "Há 1 hora" },
-            { id: 4, category: "Tecnologia", title: "Apple anuncia nova tela MicroLED revolucionária para próximos displays", summary: "Nova tecnologia promete pretos mais profundos, menor consumo de bateria e picos de brilho nunca antes vistos em smartphones.", source: "TechInsider", time: "Há 2 horas" },
-            { id: 5, category: "Mundo", title: "Agência Espacial lança com sucesso missão tripulada à órbita lunar", summary: "Missão Artemis avança com sucesso, marcando o retorno da humanidade à vizinhança da Lua após mais de 50 anos.", source: "AstroNews", time: "Há 3 horas" },
-            { id: 6, category: "Brasil", title: "Exportações do agronegócio batem recorde no primeiro semestre do ano", summary: "Alta demanda asiática impulsiona as vendas de grãos brasileiros, gerando superávit comercial expressivo.", source: "Agro Diário", time: "Há 4 horas" },
-            { id: 7, category: "Economia", title: "Banco Central reduz taxa básica de juros para estimular consumo interno", summary: "Corte de 0,5 ponto percentual na Selic surpreende analistas e deve baratear o crédito nas próximas semanas.", source: "Foco Econômico", time: "Há 5 horas" },
-            { id: 8, category: "Tecnologia", title: "Nova inteligência artificial preditiva otimiza consumo de bateria em 30%", summary: "Algoritmo analisa hábitos do usuário para suspender processos em segundo plano de forma inteligente.", source: "InovaTech", time: "Há 6 horas" }
+        // --- Notícias reais (RSS do g1 + Google Notícias) ---
+        // O site não tem servidor, então os feeds passam por proxies públicos
+        // de CORS. Usamos vários em paralelo e o primeiro que responder vence.
+        const GOOGLE_NEWS = 'https://news.google.com/rss';
+        const GOOGLE_PARAMS = 'hl=pt-BR&gl=BR&ceid=BR:pt-419';
+        const CORS_PROXIES = [
+            url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+            url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+            url => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`
         ];
+        const MAX_NEWS = 80;
+        const ROTATE_MS = 12000;
+        const REFRESH_MS = 10 * 60 * 1000;
 
-        let currentCategory = 'Todas';
-        let filteredNews = [...newsDB];
+        function feedsForRegion(code) {
+            if (code === 'BR') {
+                return [
+                    'https://g1.globo.com/rss/g1/',
+                    `${GOOGLE_NEWS}?${GOOGLE_PARAMS}`,
+                    `${GOOGLE_NEWS}/headlines/section/topic/NATION?${GOOGLE_PARAMS}`
+                ];
+            }
+            const region = REGIONS[code];
+            const query = encodeURIComponent(`"${region.name}" when:2d`);
+            return [
+                `https://g1.globo.com/rss/g1/${code.toLowerCase()}/${region.slug}/`,
+                `${GOOGLE_NEWS}/search?q=${query}&${GOOGLE_PARAMS}`
+            ];
+        }
+
+        async function fetchWithTimeout(url, ms) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), ms);
+            try {
+                const res = await fetch(url, { signal: controller.signal });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                const text = await res.text();
+                if (!/<(rss|feed|channel|item)[\s>]/i.test(text)) throw new Error('Resposta não é um feed');
+                return text;
+            } finally {
+                clearTimeout(timer);
+            }
+        }
+
+        function fetchFeedText(url) {
+            return Promise.any(CORS_PROXIES.map(proxy => fetchWithTimeout(proxy(url), 12000)));
+        }
+
+        function htmlToText(html) {
+            const doc = new DOMParser().parseFromString(html || '', 'text/html');
+            return (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
+        }
+
+        function findImage(item, descriptionHtml) {
+            const media = item.getElementsByTagName('media:content')[0] || item.getElementsByTagName('media:thumbnail')[0];
+            if (media && media.getAttribute('url')) return media.getAttribute('url');
+            const enclosure = item.getElementsByTagName('enclosure')[0];
+            if (enclosure && /^image\//.test(enclosure.getAttribute('type') || '') && enclosure.getAttribute('url')) {
+                return enclosure.getAttribute('url');
+            }
+            const match = /<img[^>]+src=["']([^"']+)["']/i.exec(descriptionHtml || '');
+            return match ? match[1] : '';
+        }
+
+        function parseFeed(xmlText, feedUrl) {
+            const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+            const isGoogle = feedUrl.includes('news.google.com');
+            const channelTitle = (doc.querySelector('channel > title') || {}).textContent || '';
+            const defaultSource = isGoogle ? 'Google Notícias' : (feedUrl.includes('g1.globo.com') ? 'g1' : channelTitle);
+
+            return Array.from(doc.querySelectorAll('item')).map(item => {
+                const get = tag => (item.getElementsByTagName(tag)[0] || {}).textContent || '';
+                const descriptionHtml = get('description');
+                let title = get('title').trim();
+                let source = get('source').trim() || defaultSource;
+
+                // Google Notícias coloca " - Fonte" no fim do título
+                if (isGoogle) {
+                    const cut = title.lastIndexOf(' - ');
+                    if (cut > 0) {
+                        if (source === defaultSource) source = title.slice(cut + 3);
+                        title = title.slice(0, cut);
+                    }
+                }
+
+                let summary = isGoogle ? '' : htmlToText(descriptionHtml);
+                if (summary.length > 240) summary = summary.slice(0, 237).trimEnd() + '…';
+                if (summary === title) summary = '';
+
+                const date = new Date(get('pubDate') || get('dc:date'));
+                return {
+                    id: get('link').trim() || title,
+                    link: get('link').trim(),
+                    title,
+                    summary,
+                    source,
+                    image: findImage(item, descriptionHtml),
+                    date: isNaN(date) ? 0 : date.getTime()
+                };
+            }).filter(n => n.title && n.link);
+        }
+
+        function normalizeTitle(title) {
+            return title.toLowerCase().normalize('NFD').replace(/[^a-z0-9 ]/g, '').slice(0, 60);
+        }
+
+        async function loadNews(code) {
+            const results = await Promise.allSettled(
+                feedsForRegion(code).map(url => fetchFeedText(url).then(text => parseFeed(text, url)))
+            );
+            const seen = new Set();
+            const all = [];
+            results.forEach(r => {
+                if (r.status !== 'fulfilled') return;
+                r.value.forEach(n => {
+                    const key = normalizeTitle(n.title);
+                    if (seen.has(key)) return;
+                    seen.add(key);
+                    all.push(n);
+                });
+            });
+            // Mais recentes primeiro
+            all.sort((a, b) => b.date - a.date);
+            return all.slice(0, MAX_NEWS);
+        }
+
+        function timeAgo(ts) {
+            if (!ts) return '';
+            const diff = Math.max(0, Date.now() - ts);
+            const min = Math.round(diff / 60000);
+            if (min < 1) return 'agora mesmo';
+            if (min < 60) return `Há ${min} min`;
+            const h = Math.round(min / 60);
+            if (h < 24) return `Há ${h} hora${h > 1 ? 's' : ''}`;
+            const d = Math.round(h / 24);
+            return `Há ${d} dia${d > 1 ? 's' : ''}`;
+        }
+
+        let newsList = [];
         let currentIndex = 0;
         let autoRotateInterval;
-        let favorites = JSON.parse(localStorage.getItem('rj_favorites')) || [];
+        let refreshInterval;
+        let loadToken = 0;
+        let favorites = storageGet('rjc_favorites', null) || storageGet('rj_favorites', []);
+        // Favoritos antigos (notícias de exemplo) não têm link: descarta
+        favorites = favorites.filter(f => f && f.link);
 
         // DOM Elements for News
         const newsTitle = document.getElementById('news-title');
@@ -277,92 +517,174 @@
         const newsSource = document.getElementById('news-source');
         const newsTime = document.getElementById('news-time');
         const newsCounter = document.getElementById('news-counter');
-        const activeCatLabel = document.getElementById('active-category');
-        const newsContainer = document.getElementById('news-container');
+        const newsBody = document.getElementById('news-body');
+        const newsImage = document.getElementById('news-image');
+        const newsImagePlaceholder = document.getElementById('news-image-placeholder');
+        const newsProgress = document.getElementById('news-progress');
         const favIcon = document.getElementById('news-fav-icon');
+        document.documentElement.style.setProperty('--rotate-ms', `${ROTATE_MS}ms`);
+
+        function showMessage(title, summary) {
+            newsTitle.textContent = title;
+            newsSummary.textContent = summary;
+            newsSource.innerHTML = `<i class="fa-regular fa-newspaper mr-1 text-blue-500"></i> RJC News`;
+            newsTime.textContent = '';
+            newsCounter.textContent = '0/0';
+            newsImage.classList.add('hidden');
+            newsImagePlaceholder.classList.remove('hidden');
+        }
+
+        function restartProgress() {
+            newsProgress.classList.remove('running');
+            void newsProgress.offsetWidth; // trigger reflow
+            if (newsList.length > 1) newsProgress.classList.add('running');
+        }
 
         function renderNews() {
-            if (filteredNews.length === 0) return;
-            
-            // Animation reset
-            newsContainer.classList.remove('fade-enter-active');
-            void newsContainer.offsetWidth; // trigger reflow
-            newsContainer.classList.add('fade-enter-active');
+            newsTag.textContent = currentRegion === 'BR' ? 'Brasil' : REGIONS[currentRegion].name;
+            if (newsList.length === 0) return;
 
-            const item = filteredNews[currentIndex];
+            // Animation reset
+            newsBody.classList.remove('fade-enter-active');
+            void newsBody.offsetWidth; // trigger reflow
+            newsBody.classList.add('fade-enter-active');
+
+            const item = newsList[currentIndex];
             newsTitle.textContent = item.title;
             newsSummary.textContent = item.summary;
-            newsTag.textContent = item.category;
-            newsSource.innerHTML = `<i class="fa-regular fa-newspaper mr-1 text-blue-500"></i> ${item.source}`;
-            newsTime.textContent = item.time;
-            newsCounter.textContent = `${currentIndex + 1}/${filteredNews.length}`;
-            
+            newsSource.innerHTML = `<i class="fa-regular fa-newspaper mr-1 text-blue-500"></i> ${escapeHtml(item.source)}`;
+            newsTime.textContent = timeAgo(item.date);
+            newsCounter.textContent = `${currentIndex + 1}/${newsList.length}`;
+
+            if (item.image) {
+                newsImage.classList.add('hidden');
+                newsImagePlaceholder.classList.remove('hidden');
+                newsImage.onload = () => {
+                    newsImage.classList.remove('hidden');
+                    newsImagePlaceholder.classList.add('hidden');
+                };
+                newsImage.onerror = () => {
+                    newsImage.classList.add('hidden');
+                    newsImagePlaceholder.classList.remove('hidden');
+                };
+                newsImage.src = item.image;
+            } else {
+                newsImage.removeAttribute('src');
+                newsImage.classList.add('hidden');
+                newsImagePlaceholder.classList.remove('hidden');
+            }
+
             // Check favorite status
             const isFav = favorites.some(f => f.id === item.id);
-            if(isFav) {
-                favIcon.className = "fa-solid fa-heart text-rose-500";
-            } else {
-                favIcon.className = "fa-regular fa-heart text-zinc-500";
-            }
+            favIcon.className = isFav ? "fa-solid fa-heart text-rose-500" : "fa-regular fa-heart text-zinc-500";
+
+            // Pré-carrega a imagem da próxima notícia
+            const next = newsList[(currentIndex + 1) % newsList.length];
+            if (next && next.image) new Image().src = next.image;
+
+            restartProgress();
         }
 
         function nextNews() {
-            currentIndex = (currentIndex + 1) % filteredNews.length;
+            if (newsList.length === 0) return;
+            currentIndex = (currentIndex + 1) % newsList.length;
             renderNews();
             resetTimer();
         }
 
         function prevNews() {
-            currentIndex = (currentIndex - 1 + filteredNews.length) % filteredNews.length;
+            if (newsList.length === 0) return;
+            currentIndex = (currentIndex - 1 + newsList.length) % newsList.length;
             renderNews();
             resetTimer();
         }
 
-        function setCategory(cat) {
-            currentCategory = cat;
-            activeCatLabel.textContent = cat;
-            
-            if (cat === 'Todas') {
-                filteredNews = [...newsDB];
-            } else {
-                filteredNews = newsDB.filter(n => n.category === cat);
+        function openLink(url) {
+            if (url) window.open(url, '_blank', 'noopener');
+        }
+
+        function openCurrentNews() {
+            const item = newsList[currentIndex];
+            if (item) openLink(item.link);
+        }
+
+        async function refreshNews(showLoading) {
+            const token = ++loadToken;
+            const code = currentRegion;
+            const cacheKey = `rjc_news_${code}`;
+
+            // Mostra o que estiver em cache enquanto busca as novas
+            if (showLoading) {
+                const cached = storageGet(cacheKey, []);
+                if (cached.length) {
+                    newsList = cached;
+                    currentIndex = 0;
+                    renderNews();
+                    resetTimer();
+                } else {
+                    newsList = [];
+                    showMessage('Carregando as últimas notícias...', `Buscando notícias de ${REGIONS[code].name}.`);
+                }
             }
-            
-            currentIndex = 0;
-            renderNews();
-            updateCategoryButtons();
+
+            let fresh = [];
+            try {
+                fresh = await loadNews(code);
+            } catch (err) {
+                console.error('Erro ao buscar notícias:', err);
+            }
+            if (token !== loadToken) return; // usuário trocou de estado no meio
+
+            if (fresh.length) {
+                const currentId = newsList[currentIndex] && newsList[currentIndex].id;
+                newsList = fresh;
+                const keep = newsList.findIndex(n => n.id === currentId);
+                currentIndex = keep > -1 ? keep : 0;
+                storageSet(cacheKey, fresh);
+                renderNews();
+                resetTimer();
+            } else if (newsList.length === 0) {
+                showMessage('Não foi possível carregar as notícias.', 'Verifique sua conexão. Tentaremos novamente em instantes.');
+                setTimeout(() => { if (token === loadToken) refreshNews(false); }, 30000);
+            }
+        }
+
+        function populateRegions() {
+            const select = document.getElementById('region-select');
+            select.innerHTML = Object.entries(REGIONS)
+                .map(([code, r]) => `<option value="${code}">${escapeHtml(r.name)}</option>`)
+                .join('');
+            select.value = currentRegion;
+        }
+
+        function setRegion(code) {
+            if (!REGIONS[code]) return;
+            currentRegion = code;
+            storageSet('rjc_region', code);
+            fetchWeather();
+            refreshNews(true);
             closeModal('settings-modal');
         }
 
-        function updateCategoryButtons() {
-            const btns = document.querySelectorAll('.cat-btn');
-            btns.forEach(btn => {
-                if (btn.textContent.trim() === currentCategory) {
-                    btn.className = 'cat-btn bg-white text-black font-semibold rounded-xl py-3 text-sm transition shadow-lg shadow-white/10';
-                } else {
-                    btn.className = 'cat-btn bg-zinc-800 text-zinc-400 font-medium rounded-xl py-3 text-sm transition hover:bg-zinc-700 hover:text-white';
-                }
-            });
-        }
-
         function toggleFavorite() {
-            const currentItem = filteredNews[currentIndex];
+            const currentItem = newsList[currentIndex];
+            if (!currentItem) return;
             const index = favorites.findIndex(f => f.id === currentItem.id);
-            
-            if(index > -1) {
+
+            if (index > -1) {
                 favorites.splice(index, 1);
             } else {
-                favorites.push(currentItem);
+                favorites.unshift(currentItem);
             }
-            
-            localStorage.setItem('rj_favorites', JSON.stringify(favorites));
+
+            storageSet('rjc_favorites', favorites);
             renderNews(); // re-render to update icon
             updateFavBadge();
         }
 
         function updateFavBadge() {
             const badge = document.getElementById('fav-count');
-            if(favorites.length > 0) {
+            if (favorites.length > 0) {
                 badge.textContent = favorites.length;
                 badge.classList.remove('hidden');
             } else {
@@ -372,7 +694,7 @@
 
         // Auto rotation
         function startTimer() {
-            autoRotateInterval = setInterval(nextNews, 10000);
+            autoRotateInterval = setInterval(nextNews, ROTATE_MS);
         }
         function resetTimer() {
             clearInterval(autoRotateInterval);
@@ -383,8 +705,9 @@
         function openModal(id) {
             const modal = document.getElementById(id);
             modal.classList.remove('hidden');
-            
-            if(id === 'favorites-modal') renderFavorites();
+
+            if (id === 'favorites-modal') renderFavorites();
+            if (id === 'settings-modal') document.getElementById('region-select').value = currentRegion;
 
             setTimeout(() => {
                 modal.classList.remove('opacity-0');
@@ -401,30 +724,33 @@
 
         function renderFavorites() {
             const container = document.getElementById('favorites-list');
-            if(favorites.length === 0) {
+            if (favorites.length === 0) {
                 container.innerHTML = `
                     <div class="text-center py-10">
-                        <i class="fa-regular fa-folder-open text-4xl text-zinc-700 mb-3"></i>
+                        <i class="fa-regular fa-folder-open text-4xl text-zinc-400 dark:text-zinc-700 mb-3"></i>
                         <p class="text-zinc-500">Nenhuma notícia salva.</p>
                     </div>`;
                 return;
             }
 
-            container.innerHTML = favorites.map(item => `
-                <div class="bg-zinc-800/50 p-4 rounded-2xl border border-zinc-700/50">
-                    <div class="flex justify-between items-start mb-2">
-                        <span class="text-xs text-blue-400 font-semibold">${item.category}</span>
-                        <button onclick="removeFavorite(${item.id})" class="text-zinc-500 hover:text-rose-500 transition"><i class="fa-solid fa-trash text-sm"></i></button>
+            container.innerHTML = favorites.map((item, i) => `
+                <div onclick="openLink(favorites[${i}].link)" class="bg-zinc-50 dark:bg-zinc-800/50 p-3 rounded-2xl border border-zinc-200 dark:border-zinc-700/50 flex gap-3 cursor-pointer hover:border-blue-500/50 transition">
+                    ${item.image ? `<img src="${escapeHtml(item.image)}" alt="" referrerpolicy="no-referrer" class="w-24 h-20 rounded-xl object-cover shrink-0" onerror="this.remove()">` : ''}
+                    <div class="flex-1 min-w-0">
+                        <div class="flex justify-between items-start mb-1 gap-2">
+                            <span class="text-xs text-blue-600 dark:text-blue-400 font-semibold truncate">${escapeHtml(item.source)}</span>
+                            <button onclick="event.stopPropagation(); removeFavorite(${i})" class="text-zinc-500 hover:text-rose-500 transition" title="Remover"><i class="fa-solid fa-trash text-sm"></i></button>
+                        </div>
+                        <h4 class="font-bold leading-tight line-clamp-2">${escapeHtml(item.title)}</h4>
+                        ${item.summary ? `<p class="text-zinc-500 dark:text-zinc-400 text-sm line-clamp-1 mt-1">${escapeHtml(item.summary)}</p>` : ''}
                     </div>
-                    <h4 class="text-white font-bold text-lg mb-1 leading-tight">${item.title}</h4>
-                    <p class="text-zinc-400 text-sm line-clamp-2">${item.summary}</p>
                 </div>
             `).join('');
         }
 
-        function removeFavorite(id) {
-            favorites = favorites.filter(f => f.id !== id);
-            localStorage.setItem('rj_favorites', JSON.stringify(favorites));
+        function removeFavorite(i) {
+            favorites.splice(i, 1);
+            storageSet('rjc_favorites', favorites);
             renderFavorites();
             updateFavBadge();
             renderNews(); // update main view icon if needed
@@ -439,6 +765,11 @@
 
         function isFullscreen() {
             return !!(document.fullscreenElement || document.webkitFullscreenElement);
+        }
+
+        function canFullscreen() {
+            const el = document.documentElement;
+            return !!(el.requestFullscreen || el.webkitRequestFullscreen);
         }
 
         function enterFullscreen() {
@@ -457,13 +788,18 @@
             if (exit && isFullscreen()) exit.call(document);
         }
 
-        function onFirstTap() {
+        function onFirstTap(e) {
             tapListenerArmed = false;
-            if (landscapeQuery.matches) enterFullscreen();
+            if (landscapeQuery.matches && !isFullscreen()) {
+                // Este toque serve só para entrar em tela cheia (não abre a notícia)
+                e.stopPropagation();
+                e.preventDefault();
+                enterFullscreen();
+            }
         }
 
         function armTapToFullscreen() {
-            if (tapListenerArmed) return;
+            if (tapListenerArmed || !canFullscreen()) return;
             tapListenerArmed = true;
             document.addEventListener('click', onFirstTap, { once: true, capture: true });
         }
@@ -497,14 +833,14 @@
         }
 
         // Init
-        updateCategoryButtons();
-        renderNews();
+        applyTheme();
+        populateRegions();
         updateFavBadge();
-        startTimer();
+        fetchWeather();
+        refreshNews(true);
+        refreshInterval = setInterval(() => refreshNews(false), REFRESH_MS);
         autoFullscreen();
 
     </script>
 </body>
 </html>
-
-
