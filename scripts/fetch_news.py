@@ -139,6 +139,10 @@ def parse(xml_bytes, url):
         get = lambda tag: (item.findtext(tag) or "").strip()
         title, link, description = get("title"), get("link"), get("description")
         source = get("source") or default_source
+        # Site de origem (para o logo quando não houver foto)
+        src_el = item.find("source")
+        site_url = (src_el.get("url") if src_el is not None else "") or ("" if is_google else link)
+        site = urllib.parse.urlparse(site_url).netloc.removeprefix("www.")
         if is_google:
             cut = title.rfind(" - ")
             if cut > 0:
@@ -155,7 +159,7 @@ def parse(xml_bytes, url):
         if title and link:
             items.append({
                 "id": link, "link": link, "title": title, "summary": summary,
-                "source": source, "image": find_image(item, description), "date": date,
+                "source": source, "site": site, "image": find_image(item, description), "date": date,
             })
     return items
 
@@ -296,7 +300,7 @@ def article_id(link):
     return hashlib.sha1(link.encode()).hexdigest()[:16]
 
 
-MAX_GOOGLE_RESOLVE = 250   # notícias do Google resolvidas por execução
+MAX_GOOGLE_RESOLVE = 1000  # notícias do Google resolvidas por execução
 META_TAG = re.compile(r"<meta\b[^>]*>", re.I)
 
 
@@ -352,8 +356,14 @@ def attach_google(results):
     prev = PREV_DIR / cache_file if PREV_DIR else None
     cache = json.loads(prev.read_text(encoding="utf-8")) if prev and prev.exists() else {}
 
-    links = {n["link"] for news in results.values() for n in news if "news.google.com" in n["link"]}
-    todo = [l for l in links if l not in cache]
+    google = [n for news in results.values() for n in news if "news.google.com" in n["link"]]
+    links = {n["link"] for n in google}
+    # Mais recentes primeiro: são as que aparecem antes na tela
+    todo, queued = [], set()
+    for n in sorted(google, key=lambda n: n["date"], reverse=True):
+        if n["link"] not in cache and n["link"] not in queued:
+            queued.add(n["link"])
+            todo.append(n["link"])
 
     def get(link):
         try:
@@ -362,7 +372,7 @@ def attach_google(results):
             print(f"FAIL google {link[:80]}: {err}")
             return link, None
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=16) as pool:
         for link, info in pool.map(get, todo[:MAX_GOOGLE_RESOLVE]):
             if info is not None:
                 cache[link] = info
@@ -376,6 +386,7 @@ def attach_google(results):
             if not info or not info["url"]:
                 continue
             n["link"] = info["url"]
+            n["site"] = urllib.parse.urlparse(info["url"]).netloc.removeprefix("www.")
             if info["image"]:
                 n["image"] = info["image"]
                 n["images"] = [info["image"]]
