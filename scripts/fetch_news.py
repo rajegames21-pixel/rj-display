@@ -70,7 +70,7 @@ MEDIA_NS = "{http://search.yahoo.com/mrss/}"
 CONTENT_NS = "{http://purl.org/rss/1.0/modules/content/}"
 # Sites locais extras por estado (RSS), além do g1 e do Google Notícias
 STATE_EXTRA_FEEDS = {
-    "PI": ["https://piauinoticias.com/feed/"],
+    "PI": ["api:piauinoticias"],
 }
 MAX_NEWS = 150             # notícias publicadas por lista (todas com foto ou vídeo)
 MAX_CANDIDATES = 250       # candidatas por lista antes de filtrar as sem foto
@@ -219,7 +219,41 @@ def norm(title):
     return re.sub(r"[^a-z0-9 ]", "", t)[:60]
 
 
+def piauinoticias():
+    """Portal Piauí Notícias: o site não tem RSS; usa a mesma API pública que
+    a página inicial dele usa (/api/home-news)."""
+    data = json.loads(fetch("https://piauinoticias.com/api/home-news"))
+    posts = list(data.get("featured") or [])
+    for group in (data.get("news") or {}).values():
+        posts.extend(group or [])
+    items, seen = [], set()
+    for p in posts:
+        if not p.get("slug") or not p.get("title") or p["slug"] in seen:
+            continue
+        seen.add(p["slug"])
+        try:
+            date = int(datetime.fromisoformat(p["published_at"].replace("Z", "+00:00")).timestamp() * 1000)
+        except Exception:
+            date = 0
+        link = f"https://piauinoticias.com/{p.get('category_slug') or 'noticia'}/{p['slug']}"
+        items.append({"id": link, "link": link, "title": html.unescape(p["title"]).strip(),
+                      "summary": html_to_text(p.get("excerpt") or ""), "source": "Piauí Notícias",
+                      "site": "piauinoticias.com", "image": p.get("image_url") or "", "date": date})
+    return items
+
+
+CUSTOM_SOURCES = {"api:piauinoticias": piauinoticias}
+
+
 def load_feed(url):
+    if url in CUSTOM_SOURCES:
+        try:
+            items = CUSTOM_SOURCES[url]()
+            print(f"ok   {len(items):3d}  {url}")
+            return items
+        except Exception as err:
+            print(f"FAIL      {url}: {err}")
+            return []
     try:
         items = parse(fetch(url), url)
         print(f"ok   {len(items):3d}  {url}")
