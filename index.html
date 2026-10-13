@@ -245,6 +245,18 @@
                         </div>
                         <span class="absolute top-3 left-3 bg-black/60 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full"><i class="fa-solid fa-video mr-1"></i>Vídeo</span>
                     </div>
+                    <!-- Vídeo do YouTube (categoria Vídeos): toca aqui dentro -->
+                    <div id="yt-wrap" class="hidden absolute inset-0 bg-black overflow-hidden">
+                        <div id="yt-frame" class="absolute top-0 h-full left-1/2 -translate-x-1/2"><div id="yt-player"></div></div>
+                        <!-- Camada transparente: o toque vai para o cartão (abrir no YouTube) -->
+                        <div class="absolute inset-0"></div>
+                        <div class="absolute top-3 left-3 right-3 flex items-center justify-between">
+                            <span class="bg-black/60 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full"><i class="fa-brands fa-youtube text-red-500 mr-1"></i>Vídeo</span>
+                            <button onclick="event.stopPropagation(); toggleYtSound()" class="w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center active:scale-95 transition" title="Som">
+                                <i id="yt-sound-icon" class="fa-solid fa-volume-xmark"></i>
+                            </button>
+                        </div>
+                    </div>
                     <div id="image-dots" class="absolute bottom-3 left-0 right-0 flex justify-center gap-1.5"></div>
                 </div>
 
@@ -331,7 +343,7 @@
     <script>
         // Versão do app. Ao publicar uma mudança, atualize aqui E em version.json:
         // quem estiver com o RJC aberto recarrega sozinho para a versão nova.
-        const APP_VERSION = '2026.10.13-3';
+        const APP_VERSION = '2026.10.13-4';
 
         // --- Helpers ---
         function storageGet(key, fallback) {
@@ -402,7 +414,8 @@
             agro: { label: 'Agro', icon: 'fa-wheat-awn' },
             turismo: { label: 'Turismo', icon: 'fa-plane' },
             concursos: { label: 'Concursos', icon: 'fa-briefcase' },
-            policia: { label: 'Polícia', icon: 'fa-shield-halved' }
+            policia: { label: 'Polícia', icon: 'fa-shield-halved' },
+            videos: { label: 'Vídeos', icon: 'fa-circle-play' }
         };
         let selectedCats = storageGet('rjc_cats', ['destaques']).filter(c => CATEGORIES[c]);
         if (selectedCats.length === 0) selectedCats = ['destaques'];
@@ -848,6 +861,7 @@
             newsCounter.textContent = '0/0';
             newsArticle.innerHTML = '';
             renderSourcePlaceholder(null);
+            stopYouTube();
             showImages([]);
             updateMoreHint();
         }
@@ -945,8 +959,141 @@
 
         function restartProgress() {
             newsProgress.classList.remove('running');
+            newsProgress.style.width = '';
             void newsProgress.offsetWidth; // trigger reflow
-            if (newsList.length > 1) newsProgress.classList.add('running');
+            if (newsList.length > 1 && !ytActive) newsProgress.classList.add('running');
+        }
+
+        // --- Vídeos do YouTube: tocam dentro do RJC (player oficial) ---
+        // Começa sem som (regra dos navegadores para tocar sozinho). A próxima
+        // notícia entra quando o vídeo termina, ou após YT_MAX_MS em vídeos
+        // longos/ao vivo. Se o vídeo falhar, mostra a capa no ritmo normal.
+        const YT_MAX_MS = 5 * 60 * 1000;
+        const YT_START_TIMEOUT_MS = 12000;
+        const ytWrap = document.getElementById('yt-wrap');
+        let ytActive = false;
+        let ytItem = null;
+        let ytPlayer = null;
+        let ytApiPromise = null;
+        let ytProgressTimer = null;
+        let ytStartTimer = null;
+        let ytStartedAt = 0;
+        let ytSoundOn = storageGet('rjc_sound', false);
+
+        function loadYouTubeApi() {
+            if (!ytApiPromise) {
+                ytApiPromise = new Promise((resolve, reject) => {
+                    window.onYouTubeIframeAPIReady = resolve;
+                    const tag = document.createElement('script');
+                    tag.src = 'https://www.youtube.com/iframe_api';
+                    tag.onerror = reject;
+                    document.head.appendChild(tag);
+                });
+            }
+            return ytApiPromise;
+        }
+
+        // Preenche o painel (vídeo 16:9 cortando as laterais)
+        function fitYouTube() {
+            const frame = document.getElementById('yt-frame');
+            frame.style.width = `${Math.max(ytWrap.clientWidth, ytWrap.clientHeight * 16 / 9)}px`;
+            const iframe = frame.querySelector('iframe');
+            if (iframe) { iframe.style.width = '100%'; iframe.style.height = '100%'; }
+        }
+        window.addEventListener('resize', fitYouTube);
+
+        function updateYtSoundIcon() {
+            document.getElementById('yt-sound-icon').className = `fa-solid ${ytSoundOn ? 'fa-volume-high' : 'fa-volume-xmark'}`;
+        }
+
+        function toggleYtSound() {
+            ytSoundOn = !ytSoundOn;
+            storageSet('rjc_sound', ytSoundOn);
+            updateYtSoundIcon();
+            if (ytPlayer && ytPlayer.mute) ytSoundOn ? ytPlayer.unMute() : ytPlayer.mute();
+        }
+
+        function stopYouTube() {
+            clearInterval(ytProgressTimer);
+            clearTimeout(ytStartTimer);
+            ytActive = false;
+            ytItem = null;
+            ytWrap.classList.add('hidden');
+            if (ytPlayer && ytPlayer.stopVideo) ytPlayer.stopVideo();
+        }
+
+        // Vídeo terminou ou falhou: segue o ritmo normal
+        function finishYouTube(item, goNext) {
+            if (ytItem !== item) return;
+            stopYouTube();
+            if (goNext) return nextNews();
+            showImages(item.image ? [item.image] : []);
+            if (!isHolding) {
+                resetTimer();
+                restartProgress();
+            }
+        }
+
+        function onYtState(e) {
+            const item = ytItem;
+            if (!ytActive || !item) return;
+            if (e.data === YT.PlayerState.PLAYING) {
+                clearTimeout(ytStartTimer);
+                if (!ytStartedAt) ytStartedAt = Date.now();
+                if (ytSoundOn) ytPlayer.unMute();
+                if (isHolding) ytPlayer.pauseVideo();
+            } else if (e.data === YT.PlayerState.ENDED) {
+                finishYouTube(item, true);
+            }
+        }
+
+        function trackYtProgress() {
+            clearInterval(ytProgressTimer);
+            ytProgressTimer = setInterval(() => {
+                if (!ytActive || !ytPlayer || !ytPlayer.getCurrentTime) return;
+                const duration = ytPlayer.getDuration() || 0;      // 0 = ao vivo
+                const limit = duration ? Math.min(duration * 1000, YT_MAX_MS) : YT_MAX_MS;
+                const played = duration ? ytPlayer.getCurrentTime() * 1000 : (ytStartedAt ? Date.now() - ytStartedAt : 0);
+                newsProgress.style.width = `${Math.min(100, (played / limit) * 100)}%`;
+                if (played >= limit && limit === YT_MAX_MS) finishYouTube(ytItem, true);
+            }, 500);
+        }
+
+        async function startYouTube(item) {
+            stopYouTube();
+            showImages(item.image ? [item.image] : []); // capa enquanto carrega
+            ytActive = true;
+            ytItem = item;
+            ytStartedAt = 0;
+            clearInterval(autoRotateInterval);
+            newsProgress.classList.remove('running');
+            newsProgress.style.width = '0%';
+            updateYtSoundIcon();
+            ytStartTimer = setTimeout(() => finishYouTube(item, false), YT_START_TIMEOUT_MS);
+            try {
+                await loadYouTubeApi();
+            } catch (e) {
+                return finishYouTube(item, false);
+            }
+            if (ytItem !== item) return;
+            ytWrap.classList.remove('hidden');
+            fitYouTube();
+            if (!ytPlayer) {
+                ytPlayer = new YT.Player('yt-player', {
+                    host: 'https://www.youtube-nocookie.com',
+                    videoId: item.youtube,
+                    playerVars: { autoplay: 1, mute: 1, controls: 0, playsinline: 1, rel: 0, modestbranding: 1, iv_load_policy: 3, disablekb: 1, fs: 0 },
+                    events: {
+                        onReady: () => { fitYouTube(); ytPlayer.mute(); ytPlayer.playVideo(); },
+                        onStateChange: onYtState,
+                        onError: () => finishYouTube(ytItem, false)
+                    }
+                });
+            } else {
+                ytPlayer.mute();
+                ytPlayer.loadVideoById(item.youtube);
+            }
+            trackYtProgress();
         }
 
         function renderNews() {
@@ -974,10 +1121,17 @@
             renderSourcePlaceholder(item);
             const posters = (item.videos || []).map(v => v.poster).filter(Boolean);
             const photos = item.images && item.images.length ? item.images : (item.image ? [item.image] : []);
-            showImages([...posters, ...photos]);
-            document.getElementById('open-label').innerHTML = posters.length
-                ? 'Toque para assistir <i class="fa-solid fa-play ml-1"></i>'
-                : 'Toque para abrir <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i>';
+            if (item.youtube) {
+                startYouTube(item);
+            } else {
+                stopYouTube();
+                showImages([...posters, ...photos]);
+            }
+            document.getElementById('open-label').innerHTML = item.youtube
+                ? 'Toque para abrir no YouTube <i class="fa-brands fa-youtube ml-1"></i>'
+                : posters.length
+                    ? 'Toque para assistir <i class="fa-solid fa-play ml-1"></i>'
+                    : 'Toque para abrir <i class="fa-solid fa-arrow-up-right-from-square ml-1"></i>';
             renderArticle(item);
             updateMoreHint();
 
@@ -1028,12 +1182,20 @@
 
         function pauseRotation() {
             clearInterval(autoRotateInterval);
-            newsProgress.classList.remove('running');
+            if (ytActive) {
+                if (ytPlayer && ytPlayer.pauseVideo) ytPlayer.pauseVideo();
+            } else {
+                newsProgress.classList.remove('running');
+            }
             pausedBadge.classList.remove('hidden');
         }
 
         function resumeRotation() {
             pausedBadge.classList.add('hidden');
+            if (ytActive) {
+                if (ytPlayer && ytPlayer.playVideo) ytPlayer.playVideo();
+                return;
+            }
             resetTimer();
             restartProgress();
         }
@@ -1278,6 +1440,7 @@
 
         // Auto rotation
         function startTimer() {
+            if (ytActive) return; // o vídeo decide quando passar
             autoRotateInterval = setInterval(nextNews, ROTATE_MS);
         }
         function resetTimer() {
