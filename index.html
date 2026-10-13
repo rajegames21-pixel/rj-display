@@ -331,7 +331,7 @@
     <script>
         // Versão do app. Ao publicar uma mudança, atualize aqui E em version.json:
         // quem estiver com o RJC aberto recarrega sozinho para a versão nova.
-        const APP_VERSION = '2026.10.13-2';
+        const APP_VERSION = '2026.10.13-3';
 
         // --- Helpers ---
         function storageGet(key, fallback) {
@@ -750,6 +750,17 @@
             return seenSet.has(normalizeTitle(item.title));
         }
 
+        // Só notícias com foto ou vídeo. Se nenhuma tiver (ex.: fonte reserva
+        // sem fotos), mostra as que houver para a tela não ficar vazia.
+        function hasMedia(n) {
+            return !!(n.image || (n.images && n.images.length) || (n.videos && n.videos.length));
+        }
+
+        function onlyWithMedia(items) {
+            const withMedia = items.filter(hasMedia);
+            return withMedia.length ? withMedia : items;
+        }
+
         function prioritizeUnseen(items) {
             return [...items.filter(n => !isSeen(n)), ...items.filter(isSeen)];
         }
@@ -1094,7 +1105,7 @@
             if (showLoading) {
                 const cache = storageGet('rjc_news_cache', null);
                 if (cache && cache.key === cacheKey && cache.items.length) {
-                    newsList = prioritizeUnseen(cache.items);
+                    newsList = prioritizeUnseen(onlyWithMedia(cache.items));
                     currentIndex = 0;
                     renderNews();
                     resetTimer();
@@ -1106,7 +1117,7 @@
 
             let fresh = [];
             try {
-                fresh = await loadSelectedNews(code);
+                fresh = onlyWithMedia(await loadSelectedNews(code));
             } catch (err) {
                 console.error('Erro ao buscar notícias:', err);
             }
