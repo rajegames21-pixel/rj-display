@@ -137,6 +137,11 @@
             </div>
 
             <div class="flex items-center space-x-2 shrink-0">
+                <!-- Bateria (só aparece onde o navegador informa: Chrome/Android) -->
+                <div id="battery" class="hidden items-center gap-2 bg-zinc-200/60 dark:bg-zinc-900/50 border border-zinc-300/50 dark:border-zinc-800/50 px-3 py-1.5 rounded-full mr-2">
+                    <i id="battery-icon" class="fa-solid fa-battery-full text-emerald-500 text-sm"></i>
+                    <span id="battery-text" class="text-xs font-medium text-zinc-600 dark:text-zinc-300 whitespace-nowrap">--%</span>
+                </div>
                 <button onclick="openModal('favorites-modal')" class="text-zinc-500 hover:text-rose-500 transition relative p-2" title="Favoritos">
                     <i class="fa-solid fa-heart text-xl"></i>
                     <span id="fav-count" class="absolute top-0 right-0 w-4 h-4 bg-rose-600 text-white text-[9px] font-bold rounded-full flex items-center justify-center hidden">0</span>
@@ -1216,6 +1221,33 @@
             renderNews(); // update main view icon if needed
         }
 
+        // --- Bateria ---
+        // Usa a Battery API. O Safari (iPhone/iPad) não informa a bateria para
+        // sites, então lá o indicador fica escondido.
+        async function initBattery() {
+            if (!navigator.getBattery) return;
+            try {
+                const battery = await navigator.getBattery();
+                const box = document.getElementById('battery');
+                const icon = document.getElementById('battery-icon');
+                const text = document.getElementById('battery-text');
+                const update = () => {
+                    const pct = Math.round(battery.level * 100);
+                    const level = pct >= 90 ? 'full' : pct >= 60 ? 'three-quarters' : pct >= 35 ? 'half' : pct >= 15 ? 'quarter' : 'empty';
+                    const color = battery.charging ? 'text-emerald-500' : pct < 20 ? 'text-rose-500' : 'text-zinc-500 dark:text-zinc-400';
+                    icon.className = `fa-solid ${battery.charging ? 'fa-bolt' : 'fa-battery-' + level} ${color} text-sm`;
+                    text.textContent = battery.charging ? `Carregando (${pct}%)` : `${pct}%`;
+                };
+                update();
+                battery.addEventListener('levelchange', update);
+                battery.addEventListener('chargingchange', update);
+                box.classList.remove('hidden');
+                box.classList.add('flex');
+            } catch (e) {
+                // Sem acesso à bateria: mantém escondido
+            }
+        }
+
         // --- Fullscreen ---
         // Navegadores só permitem tela cheia após um toque do usuário, então:
         // ao girar para horizontal tentamos entrar direto; se o navegador
@@ -1298,6 +1330,7 @@
         // Init
         applyTheme();
         populateRegions();
+        initBattery();
         renderCategoryButtons();
         updateFavBadge();
         fetchWeather();
