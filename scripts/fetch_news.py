@@ -400,9 +400,11 @@ def attach_google(results):
 
     google = [n for news in results.values() for n in news if "news.google.com" in n["link"]]
     keys = {google_key(n) for n in google}
-    # Mais recentes primeiro: são as que aparecem antes na tela
+    # Cidades primeiro (são poucas e só vêm do Google), depois as mais recentes
+    city_keys = {google_key(n) for code, news in results.items() if code.startswith("city:") for n in news
+                 if "news.google.com" in n["link"]}
     todo, queued = [], set()
-    for n in sorted(google, key=lambda n: n["date"], reverse=True):
+    for n in sorted(google, key=lambda n: (google_key(n) not in city_keys, -n["date"])):
         key = google_key(n)
         if key not in cache and key not in queued:
             queued.add(key)
