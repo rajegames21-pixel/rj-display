@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - scripts/fetch_news.py
+      - cidades.json
       - .github/workflows/news.yml
 
 permissions:

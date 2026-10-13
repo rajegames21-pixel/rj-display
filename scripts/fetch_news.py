@@ -85,7 +85,34 @@ OUT_DIR = Path(sys.argv[1] if len(sys.argv) > 1 else "news")
 PREV_DIR = Path(sys.argv[2]) if len(sys.argv) > 2 else None
 
 
+# Cidades acompanhadas: lista editável em cidades.json (raiz do repositório).
+# Cada item: {"nome": "Itupeva", "uf": "SP"} e, opcionalmente, "busca" para
+# nomes que se confundem com o estado (ex.: São Paulo).
+CITIES_FILE = Path(__file__).resolve().parent.parent / "cidades.json"
+
+
+def city_slug(city):
+    base = unicodedata.normalize("NFD", f"{city['nome']}-{city['uf']}".lower())
+    return re.sub(r"[^a-z0-9]+", "-", base.encode("ascii", "ignore").decode()).strip("-")
+
+
+def load_cities():
+    try:
+        cities = json.loads(CITIES_FILE.read_text(encoding="utf-8"))
+        return {city_slug(c): c for c in cities if c.get("nome") and c.get("uf")}
+    except Exception as err:
+        print(f"FAIL cidades.json: {err}")
+        return {}
+
+
+CITIES = load_cities()
+
+
 def feeds_for(code):
+    if code.startswith("city:"):
+        city = CITIES[code[5:]]
+        query = city.get("busca") or f'"{city["nome"]}"'
+        return [f"{GOOGLE}/search?q={urllib.parse.quote(f'({query}) when:7d')}&{GOOGLE_PARAMS}"]
     if code.startswith("cat:"):
         section, google = CATEGORIES[code[4:]]
         feeds = [f"https://g1.globo.com/rss/g1/{section}/"] if section else []
@@ -373,9 +400,11 @@ def attach_google(results):
 
     google = [n for news in results.values() for n in news if "news.google.com" in n["link"]]
     keys = {google_key(n) for n in google}
-    # Mais recentes primeiro: são as que aparecem antes na tela
+    # Cidades primeiro (são poucas e só vêm do Google), depois as mais recentes
+    city_keys = {google_key(n) for code, news in results.items() if code.startswith("city:") for n in news
+                 if "news.google.com" in n["link"]}
     todo, queued = [], set()
-    for n in sorted(google, key=lambda n: n["date"], reverse=True):
+    for n in sorted(google, key=lambda n: (google_key(n) not in city_keys, -n["date"])):
         key = google_key(n)
         if key not in cache and key not in queued:
             queued.add(key)
@@ -589,7 +618,7 @@ def build_videos():
 
 def main():
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    codes = ["BR", *REGIONS, *(f"cat:{c}" for c in CATEGORIES)]
+    codes = ["BR", *REGIONS, *(f"cat:{c}" for c in CATEGORIES), *(f"city:{c}" for c in CITIES)]
     with ThreadPoolExecutor(max_workers=8) as pool:
         results = dict(zip(codes, pool.map(build, codes)))
     attach_google(results)
@@ -600,8 +629,13 @@ def main():
         results[code] = [n for n in news if n.get("image") or n.get("videos")][:MAX_NEWS]
     updated = int(time.time() * 1000)
     (OUT_DIR / "cat").mkdir(exist_ok=True)
+    (OUT_DIR / "cidades").mkdir(exist_ok=True)
+    (OUT_DIR / "cidades" / "index.json").write_text(json.dumps(
+        [{"slug": slug, "nome": c["nome"], "uf": c["uf"], "total": len(results.get(f"city:{slug}", []))}
+         for slug, c in CITIES.items()], ensure_ascii=False), encoding="utf-8")
     for code, news in results.items():
-        name = f"cat/{code[4:]}" if code.startswith("cat:") else code
+        name = (f"cat/{code[4:]}" if code.startswith("cat:")
+                else f"cidades/{code[5:]}" if code.startswith("city:") else code)
         (OUT_DIR / f"{name}.json").write_text(
             json.dumps({"updated": updated, "items": news}, ensure_ascii=False), encoding="utf-8")
     total = sum(len(v) for v in results.values())
