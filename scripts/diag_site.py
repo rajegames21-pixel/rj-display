@@ -1,19 +1,20 @@
-"""Diagnóstico temporário: onde está o feed do piauinoticias.com?"""
-import re, sys, urllib.request, urllib.error
+"""Diagnóstico temporário: de onde o piauinoticias.com (SPA) busca as notícias?"""
+import re, sys, urllib.request, urllib.parse
 UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"}
-for url in ["https://piauinoticias.com/", "https://piauinoticias.com/feed/", "https://piauinoticias.com/rss",
-            "https://piauinoticias.com/feed", "https://piauinoticias.com/rss.xml", "https://piauinoticias.com/?feed=rss2"]:
-    try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=20) as r:
-            body = r.read(400000).decode("utf-8", "replace")
-            print(f"{r.status} {url} -> {r.geturl()} type={r.headers.get('Content-Type')} server={r.headers.get('Server')} len={len(body)}")
-            print("   início:", repr(body[:200]))
-            for m in re.findall(r'<link[^>]+(?:rss|atom)[^>]*>', body, re.I)[:5]:
-                print("   feed link:", m[:200])
-            if "generator" in body:
-                g = re.search(r'<meta name="generator" content="([^"]+)"', body)
-                print("   generator:", g.group(1) if g else None)
-    except urllib.error.HTTPError as e:
-        print(f"HTTP {e.code} {url} server={e.headers.get('Server')} body={e.read(200)!r}")
-    except Exception as e:
-        print(f"FAIL {url}: {e}")
+def get(url):
+    with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=20) as r:
+        return r.read().decode("utf-8", "replace")
+home = get("https://piauinoticias.com/")
+print(home)
+scripts = re.findall(r'<script[^>]+src="([^"]+)"', home)
+for src in scripts:
+    url = urllib.parse.urljoin("https://piauinoticias.com/", src)
+    js = get(url)
+    print("== bundle", url, len(js))
+    urls = sorted(set(re.findall(r'https?://[a-zA-Z0-9._-]+(?:/[^\s"\'`<>)]{0,80})?', js)))
+    for u in urls:
+        if not any(x in u for x in ("w3.org", "reactjs", "github.com/", "mozilla", "schema.org")):
+            print("   url:", u)
+    for kw in ("supabase", "firebase", "/api/", "wp-json", "graphql", "anon", "apikey", "rest/v1", "from(\"", "from('"):
+        for m in list(re.finditer(re.escape(kw), js))[:3]:
+            print(f"   [{kw}]", repr(js[max(0, m.start()-120):m.end()+160]))
