@@ -501,7 +501,7 @@ YOUTUBE_CHANNELS = {
     "@UOL": "UOL",
     "@globonews": "GloboNews",
     "@recordnews": "Record News",
-    "@BBCBrasil": "BBC News Brasil",
+    "@bbcnewsbrasil": "BBC News Brasil",
 }
 ATOM = "{http://www.w3.org/2005/Atom}"
 YT = "{http://www.youtube.com/xml/schemas/2015}"
