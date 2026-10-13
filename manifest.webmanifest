@@ -1,6 +1,6 @@
 {
-  "name": "RJ Display",
-  "short_name": "RJ Display",
+  "name": "RJC Display",
+  "short_name": "RJC Display",
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",
