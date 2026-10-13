@@ -274,6 +274,17 @@
                         <button data-theme="auto" onclick="setTheme('auto')" class="theme-btn rounded-xl py-3 text-sm transition"><i class="fa-solid fa-circle-half-stroke mr-1"></i> Auto</button>
                     </div>
                 </div>
+
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-2">Tela</label>
+                    <button id="wake-toggle" onclick="toggleKeepAwake()" class="w-full flex items-center justify-between bg-zinc-100 dark:bg-zinc-800 rounded-xl px-4 py-3 text-sm font-medium transition">
+                        <span><i class="fa-solid fa-mobile-screen mr-2"></i>Manter a tela ligada na horizontal</span>
+                        <span id="wake-switch" class="w-11 h-6 rounded-full relative transition bg-zinc-300 dark:bg-zinc-600">
+                            <span class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform"></span>
+                        </span>
+                    </button>
+                    <p id="wake-hint" class="text-xs text-zinc-500 mt-2">Impede que o celular bloqueie a tela, então o modo "Em Espera" do iPhone não entra no lugar do RJC.</p>
+                </div>
             </div>
         </div>
     </div>
@@ -1309,6 +1320,49 @@
             setInterval(showBatterySnapshot, 60000);
         }
 
+        // --- Manter a tela ligada (Screen Wake Lock) ---
+        // Com a tela ligada o iPhone não bloqueia, e o modo "Em Espera"
+        // (relógio do StandBy) não aparece no lugar do RJC.
+        let keepAwake = storageGet('rjc_keep_awake', true);
+        let wakeLock = null;
+
+        async function updateWakeLock() {
+            const want = keepAwake && landscapeQuery.matches && document.visibilityState === 'visible';
+            if (!('wakeLock' in navigator)) return;
+            try {
+                if (want && !wakeLock) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                    wakeLock.addEventListener('release', () => { wakeLock = null; });
+                } else if (!want && wakeLock) {
+                    await wakeLock.release();
+                    wakeLock = null;
+                }
+            } catch (e) {
+                wakeLock = null; // ex.: modo economia de energia
+            }
+        }
+
+        function renderWakeToggle() {
+            const sw = document.getElementById('wake-switch');
+            sw.className = `w-11 h-6 rounded-full relative transition ${keepAwake ? 'bg-blue-600' : 'bg-zinc-300 dark:bg-zinc-600'}`;
+            sw.firstElementChild.style.transform = keepAwake ? 'translateX(20px)' : '';
+            if (!('wakeLock' in navigator)) {
+                document.getElementById('wake-hint').textContent =
+                    'Este navegador não permite manter a tela ligada. No iPhone, use Ajustes → Tela e Brilho → Bloqueio Automático → Nunca.';
+            }
+        }
+
+        function toggleKeepAwake() {
+            keepAwake = !keepAwake;
+            storageSet('rjc_keep_awake', keepAwake);
+            renderWakeToggle();
+            updateWakeLock();
+        }
+
+        document.addEventListener('visibilitychange', updateWakeLock);
+        // O pedido só vale depois de um toque em alguns navegadores
+        document.addEventListener('click', updateWakeLock, { capture: true });
+
         // --- Fullscreen ---
         // Navegadores só permitem tela cheia após um toque do usuário, então:
         // ao girar para horizontal tentamos entrar direto; se o navegador
@@ -1368,6 +1422,7 @@
         }
 
         landscapeQuery.addEventListener('change', autoFullscreen);
+        landscapeQuery.addEventListener('change', updateWakeLock);
 
         function updateFullscreenIcon() {
             document.getElementById('fullscreen-icon').className =
@@ -1392,6 +1447,8 @@
         applyTheme();
         populateRegions();
         initBattery();
+        renderWakeToggle();
+        updateWakeLock();
         renderCategoryButtons();
         updateFavBadge();
         fetchWeather();
