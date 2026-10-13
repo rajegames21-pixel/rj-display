@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>RJ Display - StandBy Mode</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        standby: {
+                            bg: '#000000', // Pure black for OLED screens
+                            card: '#0a0a0c',
+                            border: '#1f1f22',
+                            accent: '#3b82f6',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background-color: #000000;
+            color: #f4f4f5;
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+        
+        /* Smooth transitions for rotating content */
+        .fade-enter {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        .fade-enter-active {
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+        }
+
+        /* Custom scrollbar for modals */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 10px; }
+    </style>
+</head>
+<body class="h-screen w-screen bg-standby-bg text-white select-none">
+
+    <!-- Portrait Warning Overlay (Forces Landscape UX) -->
+    <div id="portrait-warning" class="fixed inset-0 z-[999] bg-black portrait:flex landscape:hidden flex-col items-center justify-center text-center p-8">
+        <div class="w-24 h-24 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center mb-6 shadow-[0_0_50px_rgba(255,255,255,0.05)]">
+            <i class="fa-solid fa-mobile-screen-button text-5xl text-zinc-400 rotate-90 animate-pulse"></i>
+        </div>
+        <h1 class="text-3xl font-bold mb-3 tracking-tight">Rotacione seu iPhone</h1>
+        <p class="text-zinc-500 text-lg max-w-sm">O RJ Display foi projetado para a experiência StandBy no modo horizontal.</p>
+    </div>
+
+    <!-- Main Application Structure (Only visible in Landscape) -->
+    <div class="portrait:hidden landscape:flex h-full w-full flex-col relative">
+        
+        <!-- Header / Status Bar -->
+        <header class="w-full px-8 py-5 flex items-center justify-between z-20 absolute top-0 left-0 right-0">
+            <div class="flex items-center space-x-3">
+                <div class="flex items-center space-x-2 bg-zinc-900/50 border border-zinc-800/50 px-3 py-1.5 rounded-full backdrop-blur-md">
+                    <i class="fa-solid fa-bolt text-emerald-400 text-sm"></i>
+                    <span class="text-xs font-medium text-zinc-300">Carregando (100%)</span>
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-4">
+                <button onclick="openModal('favorites-modal')" class="text-zinc-500 hover:text-rose-500 transition relative p-2" title="Favoritos">
+                    <i class="fa-solid fa-heart text-xl"></i>
+                    <span id="fav-count" class="absolute top-0 right-0 w-4 h-4 bg-rose-600 text-[9px] font-bold rounded-full flex items-center justify-center hidden">0</span>
+                </button>
+                <button onclick="openModal('settings-modal')" class="text-zinc-500 hover:text-white transition p-2" title="Configurações">
+                    <i class="fa-solid fa-gear text-xl"></i>
+                </button>
+                <button onclick="toggleFullscreen()" class="text-zinc-500 hover:text-white transition p-2" title="Tela Cheia">
+                    <i class="fa-solid fa-expand text-xl"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Dashboard Split -->
+        <main class="flex-1 flex flex-row items-stretch justify-center w-full px-8 py-20 gap-8 h-full">
+            
+            <!-- Left Side: Clock & Weather -->
+            <div class="flex-1 flex flex-col justify-center items-start pl-4 md:pl-12">
+                <div class="text-blue-500 text-sm font-semibold tracking-widest uppercase mb-4 flex items-center">
+                    <i class="fa-regular fa-calendar mr-2"></i>
+                    <span id="current-date">Carregando data...</span>
+                </div>
+                
+                <h1 id="current-time" class="text-8xl lg:text-[140px] font-mono font-bold tracking-tighter leading-none mb-8 text-transparent bg-clip-text bg-gradient-to-br from-white to-zinc-500">
+                    00:00
+                </h1>
+
+                <!-- Weather Widget (Open-Meteo Integration) -->
+                <div class="flex items-center space-x-5 bg-zinc-900/30 border border-zinc-800/50 p-4 rounded-3xl backdrop-blur-sm">
+                    <div id="weather-icon-container" class="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center text-2xl text-blue-400">
+                        <i class="fa-solid fa-cloud-sun" id="weather-icon"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-end space-x-2">
+                            <span id="weather-temp" class="text-3xl font-bold">--°C</span>
+                        </div>
+                        <p id="weather-desc" class="text-sm text-zinc-400">Buscando clima local...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Side: News Panel -->
+            <div class="flex-1 flex flex-col justify-center max-w-2xl">
+                
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xs font-semibold uppercase tracking-widest text-zinc-500">RJ News • <span id="active-category" class="text-white">Destaques</span></h2>
+                    <div class="flex items-center space-x-3 text-zinc-500">
+                        <button onclick="prevNews()" class="hover:text-white transition"><i class="fa-solid fa-chevron-left"></i></button>
+                        <span id="news-counter" class="text-xs font-mono">1/5</span>
+                        <button onclick="nextNews()" class="hover:text-white transition"><i class="fa-solid fa-chevron-right"></i></button>
+                    </div>
+                </div>
+
+                <!-- News Card -->
+                <div id="news-container" class="bg-standby-card border border-standby-border rounded-[2rem] p-8 shadow-2xl relative transition-all duration-500 group flex flex-col h-[320px]">
+                    <div class="flex justify-between items-start mb-4">
+                        <span id="news-tag" class="px-3 py-1 rounded-full text-xs font-bold bg-zinc-800 text-zinc-300">Categoria</span>
+                        <button onclick="toggleFavorite()" class="w-10 h-10 rounded-full bg-zinc-900 flex items-center justify-center text-zinc-500 hover:bg-zinc-800 transition active:scale-95">
+                            <i class="fa-regular fa-heart" id="news-fav-icon"></i>
+                        </button>
+                    </div>
+                    
+                    <h3 id="news-title" class="text-2xl lg:text-3xl font-bold leading-snug mb-3 text-zinc-100 line-clamp-3">
+                        Carregando as últimas notícias...
+                    </h3>
+                    
+                    <p id="news-summary" class="text-zinc-400 text-sm lg:text-base line-clamp-3 mb-auto">
+                        O algoritmo está selecionando as melhores atualizações de acordo com suas preferências.
+                    </p>
+
+                    <div class="mt-4 pt-4 border-t border-zinc-800/80 flex justify-between items-center text-xs text-zinc-500">
+                        <span id="news-source"><i class="fa-regular fa-newspaper mr-1"></i> RJ Source</span>
+                        <span id="news-time">agora mesmo</span>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 items-center justify-center hidden opacity-0 transition-opacity duration-300 flex">
+        <div class="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-3xl p-8 shadow-2xl relative">
+            <button onclick="closeModal('settings-modal')" class="absolute top-6 right-6 text-zinc-500 hover:text-white transition">
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+            
+            <h2 class="text-2xl font-bold mb-2">Configurações</h2>
+            <p class="text-sm text-zinc-400 mb-8">Personalize seu feed de notícias do RJ Display.</p>
+
+            <div class="space-y-6">
+                <div>
+                    <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-3">Categorias de Notícias</label>
+                    <div class="grid grid-cols-2 gap-3" id="category-filters">
+                        <!-- Buttons will be initialized via JS to match constraints -->
+                        <button onclick="setCategory('Todas')" class="cat-btn bg-white text-black font-semibold rounded-xl py-3 text-sm transition">Todas</button>
+                        <button onclick="setCategory('Mundo')" class="cat-btn bg-zinc-800 text-zinc-400 font-medium rounded-xl py-3 text-sm transition hover:bg-zinc-700 hover:text-white">Mundo</button>
+                        <button onclick="setCategory('Brasil')" class="cat-btn bg-zinc-800 text-zinc-400 font-medium rounded-xl py-3 text-sm transition hover:bg-zinc-700 hover:text-white">Brasil</button>
+                        <button onclick="setCategory('Economia')" class="cat-btn bg-zinc-800 text-zinc-400 font-medium rounded-xl py-3 text-sm transition hover:bg-zinc-700 hover:text-white">Economia</button>
+                        <button onclick="setCategory('Tecnologia')" class="cat-btn bg-zinc-800 text-zinc-400 font-medium rounded-xl py-3 text-sm transition hover:bg-zinc-700 hover:text-white">Tecnologia</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Favorites Modal -->
+    <div id="favorites-modal" class="fixed inset-0 bg-black/90 backdrop-blur-md z-50 items-center justify-center hidden opacity-0 transition-opacity duration-300 flex">
+        <div class="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-8 shadow-2xl relative flex flex-col max-h-[85vh]">
+            <button onclick="closeModal('favorites-modal')" class="absolute top-6 right-6 text-zinc-500 hover:text-white transition">
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+            
+            <h2 class="text-2xl font-bold mb-2 flex items-center"><i class="fa-solid fa-heart text-rose-500 mr-3"></i> Notícias Favoritas</h2>
+            <p class="text-sm text-zinc-400 mb-6">Artigos que você salvou para ler depois.</p>
+
+            <div id="favorites-list" class="flex-1 overflow-y-auto space-y-4 pr-2">
+                <!-- Populated by JS -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Clock & Date Logic ---
+        function updateTime() {
+            const now = new Date();
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            document.getElementById('current-time').textContent = `${hours}:${minutes}`;
+
+            const options = { weekday: 'long', day: 'numeric', month: 'long' };
+            let dateStr = now.toLocaleDateString('pt-BR', options);
+            dateStr = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+            document.getElementById('current-date').textContent = dateStr;
+        }
+        setInterval(updateTime, 1000);
+        updateTime();
+
+        // --- Weather Logic (Open-Meteo API) ---
+        async function fetchWeather() {
+            try {
+                // Using coordinates for São Paulo, Brazil as default fallback for demo
+                const lat = -23.5505;
+                const lon = -46.6333;
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`;
+                
+                const response = await fetch(url);
+                const data = await response.json();
+                
+                if(data && data.current_weather) {
+                    const temp = Math.round(data.current_weather.temperature);
+                    const code = data.current_weather.weathercode;
+                    
+                    document.getElementById('weather-temp').textContent = `${temp}°C`;
+                    
+                    // Simple weather code mapping based on WMO standards
+                    let iconClass = "fa-cloud-sun";
+                    let desc = "Parcialmente Nublado";
+                    
+                    if (code === 0) { iconClass = "fa-sun text-yellow-400"; desc = "Céu Limpo"; }
+                    else if (code >= 1 && code <= 3) { iconClass = "fa-cloud-sun text-gray-300"; desc = "Nublado"; }
+                    else if (code >= 45 && code <= 48) { iconClass = "fa-smog text-gray-400"; desc = "Neblina"; }
+                    else if (code >= 51 && code <= 67) { iconClass = "fa-cloud-rain text-blue-400"; desc = "Chuva"; }
+                    else if (code >= 71 && code <= 77) { iconClass = "fa-snowflake text-white"; desc = "Neve"; }
+                    else if (code >= 95) { iconClass = "fa-cloud-bolt text-purple-400"; desc = "Tempestade"; }
+
+                    document.getElementById('weather-icon').className = `fa-solid ${iconClass}`;
+                    document.getElementById('weather-desc').textContent = desc;
+                }
+            } catch (error) {
+                console.error("Erro ao buscar clima:", error);
+                document.getElementById('weather-desc').textContent = "Clima Indisponível";
+            }
+        }
+        fetchWeather();
+        setInterval(fetchWeather, 300000); // Update every 5 mins
+
+        // --- News Database & Logic ---
+        const newsDB = [
+            { id: 1, category: "Mundo", title: "Cúpula do G20 define novas metas de sustentabilidade global para 2030", summary: "Líderes mundiais assinam acordo histórico visando reduzir as emissões de carbono em 45% nos próximos quatro anos.", source: "Global News", time: "Há 15 min" },
+            { id: 2, category: "Brasil", title: "Novo marco fiscal é aprovado e promete estabilidade para investimentos", summary: "Congresso aprova medidas que visam equilibrar as contas públicas e fomentar o crescimento econômico sustentável no país.", source: "BR Atualidades", time: "Há 30 min" },
+            { id: 3, category: "Economia", title: "Bolsa de Valores atinge máxima histórica puxada pelo setor de energia", summary: "Companhias de energia renovável lideram ganhos no pregão desta quarta-feira, animando investidores institucionais.", source: "Mercado & Valor", time: "Há 1 hora" },
+            { id: 4, category: "Tecnologia", title: "Apple anuncia nova tela MicroLED revolucionária para próximos displays", summary: "Nova tecnologia promete pretos mais profundos, menor consumo de bateria e picos de brilho nunca antes vistos em smartphones.", source: "TechInsider", time: "Há 2 horas" },
+            { id: 5, category: "Mundo", title: "Agência Espacial lança com sucesso missão tripulada à órbita lunar", summary: "Missão Artemis avança com sucesso, marcando o retorno da humanidade à vizinhança da Lua após mais de 50 anos.", source: "AstroNews", time: "Há 3 horas" },
+            { id: 6, category: "Brasil", title: "Exportações do agronegócio batem recorde no primeiro semestre do ano", summary: "Alta demanda asiática impulsiona as vendas de grãos brasileiros, gerando superávit comercial expressivo.", source: "Agro Diário", time: "Há 4 horas" },
+            { id: 7, category: "Economia", title: "Banco Central reduz taxa básica de juros para estimular consumo interno", summary: "Corte de 0,5 ponto percentual na Selic surpreende analistas e deve baratear o crédito nas próximas semanas.", source: "Foco Econômico", time: "Há 5 horas" },
+            { id: 8, category: "Tecnologia", title: "Nova inteligência artificial preditiva otimiza consumo de bateria em 30%", summary: "Algoritmo analisa hábitos do usuário para suspender processos em segundo plano de forma inteligente.", source: "InovaTech", time: "Há 6 horas" }
+        ];
+
+        let currentCategory = 'Todas';
+        let filteredNews = [...newsDB];
+        let currentIndex = 0;
+        let autoRotateInterval;
+        let favorites = JSON.parse(localStorage.getItem('rj_favorites')) || [];
+
+        // DOM Elements for News
+        const newsTitle = document.getElementById('news-title');
+        const newsSummary = document.getElementById('news-summary');
+        const newsTag = document.getElementById('news-tag');
+        const newsSource = document.getElementById('news-source');
+        const newsTime = document.getElementById('news-time');
+        const newsCounter = document.getElementById('news-counter');
+        const activeCatLabel = document.getElementById('active-category');
+        const newsContainer = document.getElementById('news-container');
+        const favIcon = document.getElementById('news-fav-icon');
+
+        function renderNews() {
+            if (filteredNews.length === 0) return;
+            
+            // Animation reset
+            newsContainer.classList.remove('fade-enter-active');
+            void newsContainer.offsetWidth; // trigger reflow
+            newsContainer.classList.add('fade-enter-active');
+
+            const item = filteredNews[currentIndex];
+            newsTitle.textContent = item.title;
+            newsSummary.textContent = item.summary;
+            newsTag.textContent = item.category;
+            newsSource.innerHTML = `<i class="fa-regular fa-newspaper mr-1 text-blue-500"></i> ${item.source}`;
+            newsTime.textContent = item.time;
+            newsCounter.textContent = `${currentIndex + 1}/${filteredNews.length}`;
+            
+            // Check favorite status
+            const isFav = favorites.some(f => f.id === item.id);
+            if(isFav) {
+                favIcon.className = "fa-solid fa-heart text-rose-500";
+            } else {
+                favIcon.className = "fa-regular fa-heart text-zinc-500";
+            }
+        }
+
+        function nextNews() {
+            currentIndex = (currentIndex + 1) % filteredNews.length;
+            renderNews();
+            resetTimer();
+        }
+
+        function prevNews() {
+            currentIndex = (currentIndex - 1 + filteredNews.length) % filteredNews.length;
+            renderNews();
+            resetTimer();
+        }
+
+        function setCategory(cat) {
+            currentCategory = cat;
+            activeCatLabel.textContent = cat;
+            
+            if (cat === 'Todas') {
+                filteredNews = [...newsDB];
+            } else {
+                filteredNews = newsDB.filter(n => n.category === cat);
+            }
+            
+            currentIndex = 0;
+            renderNews();
+            updateCategoryButtons();
+            closeModal('settings-modal');
+        }
+
+        function updateCategoryButtons() {
+            const btns = document.querySelectorAll('.cat-btn');
+            btns.forEach(btn => {
+                if (btn.textContent.trim() === currentCategory) {
+                    btn.className = 'cat-btn bg-white text-black font-semibold rounded-xl py-3 text-sm transition shadow-lg shadow-white/10';
+                } else {
+                    btn.className = 'cat-btn bg-zinc-800 text-zinc-400 font-medium rounded-xl py-3 text-sm transition hover:bg-zinc-700 hover:text-white';
+                }
+            });
+        }
+
+        function toggleFavorite() {
+            const currentItem = filteredNews[currentIndex];
+            const index = favorites.findIndex(f => f.id === currentItem.id);
+            
+            if(index > -1) {
+                favorites.splice(index, 1);
+            } else {
+                favorites.push(currentItem);
+            }
+            
+            localStorage.setItem('rj_favorites', JSON.stringify(favorites));
+            renderNews(); // re-render to update icon
+            updateFavBadge();
+        }
+
+        function updateFavBadge() {
+            const badge = document.getElementById('fav-count');
+            if(favorites.length > 0) {
+                badge.textContent = favorites.length;
+                badge.classList.remove('hidden');
+            } else {
+                badge.classList.add('hidden');
+            }
+        }
+
+        // Auto rotation
+        function startTimer() {
+            autoRotateInterval = setInterval(nextNews, 10000);
+        }
+        function resetTimer() {
+            clearInterval(autoRotateInterval);
+            startTimer();
+        }
+
+        // --- Modals Logic ---
+        function openModal(id) {
+            const modal = document.getElementById(id);
+            modal.classList.remove('hidden');
+            
+            if(id === 'favorites-modal') renderFavorites();
+
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+            }, 10);
+        }
+
+        function closeModal(id) {
+            const modal = document.getElementById(id);
+            modal.classList.add('opacity-0');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 300);
+        }
+
+        function renderFavorites() {
+            const container = document.getElementById('favorites-list');
+            if(favorites.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-10">
+                        <i class="fa-regular fa-folder-open text-4xl text-zinc-700 mb-3"></i>
+                        <p class="text-zinc-500">Nenhuma notícia salva.</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = favorites.map(item => `
+                <div class="bg-zinc-800/50 p-4 rounded-2xl border border-zinc-700/50">
+                    <div class="flex justify-between items-start mb-2">
+                        <span class="text-xs text-blue-400 font-semibold">${item.category}</span>
+                        <button onclick="removeFavorite(${item.id})" class="text-zinc-500 hover:text-rose-500 transition"><i class="fa-solid fa-trash text-sm"></i></button>
+                    </div>
+                    <h4 class="text-white font-bold text-lg mb-1 leading-tight">${item.title}</h4>
+                    <p class="text-zinc-400 text-sm line-clamp-2">${item.summary}</p>
+                </div>
+            `).join('');
+        }
+
+        function removeFavorite(id) {
+            favorites = favorites.filter(f => f.id !== id);
+            localStorage.setItem('rj_favorites', JSON.stringify(favorites));
+            renderFavorites();
+            updateFavBadge();
+            renderNews(); // update main view icon if needed
+        }
+
+        // Fullscreen
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.log("Erro ao entrar em tela cheia:", err);
+                });
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        // Init
+        updateCategoryButtons();
+        renderNews();
+        updateFavBadge();
+        startTimer();
+
+    </script>
+</body>
+</html>
